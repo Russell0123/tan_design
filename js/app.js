@@ -2706,6 +2706,11 @@ const wizOptions = opt => [
       .filter(([k]) => k in opt).map(([k, t]) => { const i = el('input', { type: 'checkbox', checked: !!opt[k] }); i.addEventListener('change', () => { opt[k] = i.checked; }); return el('label', { class: 'chk' }, i, t); })),
   field('動作組', (() => { const s = el('select', { class: 'wpreset' }, ...Object.entries(Model.PRESETS).map(([k, p]) => el('option', { value: k, selected: opt.preset === k }, p.label))); s.addEventListener('change', () => { opt.preset = s.value; }); return s; })()),
   'bpm' in opt ? slider('BPM', () => opt.bpm, v => { opt.bpm = v; }, { min: 10, max: 240, step: 1, noLive: true, noCommit: true, tip: '每分鐘幾個完整循環；60 = 一秒一個循環' }) : null,
+  'eyeCover' in opt ? field('眨眼遮擋', (() => {
+    const s = el('select', {}, ...[['none', '不用（底下沒有畫眼睛）'], ['auto', '自動補膚色'], ['color', '用底色（自動取色）']].map(([v, t]) => el('option', { value: v, selected: opt.eyeCover === v }, t)));
+    s.addEventListener('change', () => { opt.eyeCover = s.value; });
+    return s;
+  })(), '眼睛閉起來後空出來的地方要不要蓋住；有指定「眼皮（遮擋用）」圖層時用那個圖層。閉眼差分、眼皮在「眨眼素材」分類') : null,
 ];
 // 精靈開著時：其他工作區變暗（畫面保留，看得到標出的圖層 / 點的位置）
 function wizDim(on) { document.body.classList.toggle('wizdim', on); }
@@ -2735,12 +2740,17 @@ function wizRoleSelect(cur, onChange) {
     const items = [{ label: mark('') + '不動', run: () => pick('') }, '-'];
     for (const [label, list, direct] of Model.TYPE_MENU) {
       if (direct) { items.push({ label: mark(direct) + label, icon: TYPES[direct].icon, run: () => pick(direct) }); continue; }
-      const sub = [...list.map(t => [t, TYPES[t].label + (t === 'eye' ? '（會眨眼）' : ''), TYPES[t].icon]), ...(label === '五官' ? WIZ_EXTRA.map(([v, t]) => [v, t, 'eye']) : [])];
+      const sub = list.map(t => [t, TYPES[t].label + (t === 'eye' ? '（會眨眼）' : ''), TYPES[t].icon]);
       const curIn = sub.find(([v]) => v === cur);
       items.push({ label: `${label} ›${curIn ? `（${curIn[1]}）` : ''}`, run: () => setTimeout(() => showMenu(x, y, [
         { label: '‹ ' + label, run: () => setTimeout(open, 0) }, '-',
         ...sub.map(([v, t, ic]) => ({ label: mark(v) + t, icon: ic, run: () => pick(v) }))]), 0) });
     }
+    // 眨眼素材：閉眼差分、眼皮（遮擋用）— 會自動配給最近的眼睛
+    const ex = WIZ_EXTRA.find(([v]) => v === cur);
+    items.push('-', { label: `眨眼素材 ›${ex ? `（${ex[1]}）` : ''}`, run: () => setTimeout(() => showMenu(x, y, [
+      { label: '‹ 眨眼素材', run: () => setTimeout(open, 0) }, '-',
+      ...WIZ_EXTRA.map(([v, t]) => ({ label: mark(v) + t, icon: 'eye', run: () => pick(v) }))]), 0) });
     items.push('-', { label: mark('background') + '背景（隱藏）', run: () => pick('background') });
     showMenu(x, y, items);
   };
@@ -2750,7 +2760,7 @@ function wizRoleSelect(cur, onChange) {
 function wizardLayered(images, opt0 = {}) {
   const known = n => n.role && (TYPES[n.role] || n.role === 'background') ? n.role : '';   // 之前設過物件屬性的沿用
   const pick = new Map(images.map(n => [n.id, known(n)]));
-  const opt = { rig: false, hair: true, arm: true, depth: false, profile: 'chibi', preset: WIZ_PROFILES.chibi.preset, bpm: Model.bpmOf(D.data), ...opt0 };   // 立體（轉頭、深度）預設不套用
+  const opt = { rig: false, hair: true, arm: true, depth: false, profile: 'chibi', preset: WIZ_PROFILES.chibi.preset, bpm: Model.bpmOf(D.data), eyeCover: 'none', ...opt0 };   // 立體（轉頭、深度）預設不套用
   const list = el('div', { class: 'wlist' });
   for (const n of images.slice().sort((a, b) => b.order - a.order)) {
     const a = D.assets.get(n.image.assetId), th = el('canvas', { width: 40, height: 40, class: 'wthumb' });
@@ -2956,8 +2966,15 @@ function wizardBuildLayered(pick, opt) {
   // 3. 眨眼：眼睛圖層 + 閉眼差分 / 眼皮
   const eyes = imgs.filter(n => R(n) === 'eye');
   if (eyes.length) {
-    const closed = imgs.find(n => R(n) === 'eyeclosed'), lid = imgs.find(n => R(n) === 'eyelid');
-    for (const n of eyes) { enableBlink(n, { closedId: closed ? closed.id : null, lidId: lid ? lid.id : null }); made++; }
+    // 左右眼分開時：每隻眼睛配最近的閉眼差分 / 眼皮
+    const ctr = n => { const b = nodeBounds(n); return [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]; };
+    const nearest = (n, role) => { const c = ctr(n); let best = null, bd = Infinity; for (const m of imgs) if (R(m) === role) { const q = ctr(m), d = Math.hypot(q[0] - c[0], q[1] - c[1]); if (d < bd) { bd = d; best = m; } } return best; };
+    for (const n of eyes) {
+      const closed = nearest(n, 'eyeclosed'), lid = nearest(n, 'eyelid');
+      const cover = lid ? { lidId: lid.id } : opt.eyeCover === 'auto' ? { lidAuto: true } : opt.eyeCover === 'color' ? { lidColor: skinAround(n) } : {};
+      enableBlink(n, { closedId: closed ? closed.id : null, ...cover });
+      made++;
+    }
   }
   // 4. 擺動鏈
   // 身體的重心（手臂、尾巴從最靠近它的一端開始長）

@@ -105,10 +105,18 @@ const Blink = (() => {
       for (let c = 0; c < 4; c++) out[c] = (P(x, y1, c) - P(x, y0, c)) / d;
     };
     // 遮擋範圍：原本眼睛的範圍（半透明的邊緣加強，蓋得住底下畫的眼睛，又不會在外圍多一圈）
+    // 眼睛本體的範圍：每一欄上下緣（原始與平滑後取較寬的）；外面的柔邊（半透明、圈選時多帶到的一圈）保持原樣
+    const inT = new Float32Array(w), inB = new Float32Array(w);
+    for (let x = 0; x < w; x++) { inT[x] = isNaN(T0[x]) ? Infinity : Math.min(top[x], T0[x]); inB[x] = isNaN(B0[x]) ? -Infinity : Math.max(bot[x], B0[x]); }
+    // 之前整張圖層都照 alpha 蓋上遮擋，柔邊會被蓋上一層淡淡的顏色 → 看起來有一圈框
     let cover = null;
     if (lid) {
       cover = new Float32Array(N);
-      for (let i = 0; i < N; i++) cover[i] = dil ? 1 : Math.min(1, eye[i * 4 + 3] / 255 * 1.6);   // 自動補膚色：範圍由補色圖自己的 alpha 決定
+      for (let i = 0; i < N; i++) {
+        const x = i % w, y = (i - x) / w;
+        if (dil) { cover[i] = 1; continue; }   // 自動補膚色：範圍由補色圖自己的 alpha 決定
+        cover[i] = y + 0.5 < inT[x] - 1 || y + 0.5 > inB[x] + 1 ? 0 : Math.min(1, eye[i * 4 + 3] / 255 * 1.6);
+      }
     }
     const smoothstep = (a, b, v) => { const q = Math.max(0, Math.min(1, (v - a) / (b - a))); return q * q * (3 - 2 * q); };
     const out = [], px = [0, 0, 0, 0];
@@ -134,11 +142,17 @@ const Blink = (() => {
             const m = cover[y * w + x] * lidA * lid[i + 3] / 255;
             r = lid[i] * m; g = lid[i + 1] * m; bb = lid[i + 2] * m; a = m;
           }
+          // 沒有眼睛本體的欄（只有外圍柔邊）：原樣保留，眨眼時不會忽隱忽現
+          if (!has && eyeA > 0 && eye[i + 3]) {
+            const pa = eye[i + 3] / 255 * eyeA;
+            r = eye[i] * pa + r * (1 - pa); g = eye[i + 1] * pa + g * (1 - pa); bb = eye[i + 2] * pa + bb * (1 - pa); a = pa + a * (1 - pa);
+          }
           // 眼睛
           if (has && eyeA > 0) {
             const y0 = y, y1 = y + 1, ym = y + 0.5;
             let s0 = NaN, s1 = NaN;
-            if (ym < c) {
+            if (ym < inT[x] || ym > inB[x]) { s0 = y0; s1 = y1; }   // 本體外面的柔邊：不動
+            else if (ym < c) {
               if (e + T <= c) {
                 // 睫毛帶整條往下移；底下的眼珠跟著往閉合線收（連續，不會有切線）
                 if (ym < e + T) { s0 = y0 - (e - t); s1 = y1 - (e - t); }
