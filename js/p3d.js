@@ -11,8 +11,11 @@ const P3D = (() => {
   const TYPE_SQUASH = { head: 0.5, torso: 0.3 };
   const DEFAULT = { enabled: false, yaw: 12, yawFreq: 1, yawPhase: 0, pitch: 0, pitchFreq: 1, pitchPhase: 8, depth: 1 };
 
+  // 注意：一定要回傳「同一個」data.p3d 物件（就地補預設值）。之前每次都換成新的複本，
+  // 介面上的勾選框 / 拉桿改到的是被換掉的舊物件 → 「啟用立體」按了沒反應
   function settings(data) {
-    const S = Object.assign({}, DEFAULT, data.p3d || {});
+    const S = data.p3d && typeof data.p3d === 'object' ? data.p3d : (data.p3d = {});
+    for (const k in DEFAULT) if (S[k] === undefined) S[k] = DEFAULT[k];
     // 舊欄位換算：freq / phase / pitchMode
     if (S.freq !== undefined) {
       S.yawFreq = S.freq; S.yawPhase = S.phase || 0;
@@ -21,7 +24,6 @@ const P3D = (() => {
       delete S.freq; delete S.phase; delete S.pitchMode;
     }
     delete S.camera;
-    data.p3d = S;
     return S;
   }
   const has3d = n => n.type !== 'root';
