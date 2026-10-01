@@ -628,3 +628,4 @@ html, body { touch-action: pan-x pan-y; }
 }
 /* 載入時先看到主頁（開檔完成才收起來） */
 body.onhome > :not(#home):not(#modal):not(#popmenu):not(#toasts):not(script) { visibility: hidden; }
+.wizard .wstep .wtrash { margin-left: auto; width: 26px; height: 26px; opacity: .7; } .wizard .wstep .wtrash:hover { opacity: 1; color: #f87171; }

@@ -2020,6 +2020,7 @@ function setupPointer() {
     if (wiz && D.ui.mode === 'edit') {
       const h = wizHit(mx, my);
       if (h) { drag = { type: 'wiz', h, moved: false }; cap(); return; }
+      if (wiz.step && e.pointerType === 'touch') { drag = { type: 'wiztap', sx: mx, sy: my, x0: x, y0: y, x, y }; cap(); return; }
       if (wiz.step) {
         if (WIZ_SEGS[wiz.step] && !wiz.pend) { wiz.pend = [Math.round(x), Math.round(y)]; wiz.mouse = [x, y]; drag = { type: 'wizhair', sx: mx, sy: my, moved: false }; cap(); renderWizard(); return; }
         wizardClick(x, y); return;
@@ -2144,6 +2145,12 @@ function setupPointer() {
     if (drag.type === 'wiz') { drag.h.set([Math.round(x), Math.round(y)]); drag.moved = true; return; }
     if (drag.type === 'spin') { drag.p.x = Math.round(drag.p.x + x - drag.lx); drag.p.y = Math.round(drag.p.y + y - drag.ly); drag.lx = x; drag.ly = y; drag.moved = true; return; }
     if (drag.type === 'wizhair') { if (Math.hypot(mx - drag.sx, my - drag.sy) > 6) drag.moved = true; return; }
+    if (drag.type === 'wiztap') {
+      drag.x = x; drag.y = y;
+      // 單指拖一段距離（頭髮、獸耳、尾巴）：預覽一筆
+      if (WIZ_SEGS[wiz.step] && !wiz.pend && Math.hypot(mx - drag.sx, my - drag.sy) > 12) { drag.seg = true; wiz.mouse = [x, y]; }
+      return;
+    }
     if (drag.type === 'crop') { cropPointerMove(drag, mx, my); return; }
     if (drag.type === 'rig') { rigPointerMove(drag, x, y); return; }
     if (drag.type === 'gmove') {
@@ -2228,6 +2235,11 @@ function setupPointer() {
     if (d.type === 'spin') { if (d.moved) commit(); releasePlay(); }
     // 頭髮：按住拖到髮尾放開 = 直接建立；只點一下 = 線跟著滑鼠，再點一下建立
     if (d.type === 'wizhair' && wiz && d.moved && wiz.mouse) wizardClick(wiz.mouse[0], wiz.mouse[1]);
+    // 觸控：沒被兩指縮放取消才算數
+    if (d.type === 'wiztap' && wiz && !d.cancel) {
+      if (d.seg && WIZ_SEGS[wiz.step] && !wiz.pend) { wizardClick(d.x0, d.y0); wizardClick(d.x, d.y); }
+      else if (Math.hypot(d.x - d.x0, d.y - d.y0) * view.base * D.ui.zoom < 14 || !WIZ_SEGS[wiz.step]) wizardClick(d.x0, d.y0);
+    }
     if (d.type === 'rig') { commit(); renderParams(); }
     if (d.type === 'gmove' && (d.tx || d.ty)) { shiftNodes(d.ids, d.tx, d.ty, 'masks'); commit(); renderAll(); }   // 遮罩只在放開時平移一次
     if ((d.type === 'tlmove' || d.type === 'tlrot') && d.moved) { commit(); renderTimeline(); }
@@ -2254,7 +2266,9 @@ function setupPointer() {
     if (touches.size === 2) {
       const [a, b] = [...touches.values()], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       pinch = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: D.ui.zoom, doc: toDoc(mid[0], mid[1]) };
+      if (drag && drag.type === 'wiztap') drag.cancel = true;
       drag = null; stroke = null; lasso = null;
+      if (wiz) { wiz.pend = wiz.pend && wiz.pendTouch ? null : wiz.pend; renderWizard(); }
       e.stopImmediatePropagation();
     }
   }, true);
@@ -2943,6 +2957,15 @@ const wizHairR = () => { const M = Math.max(D.data.width, D.data.height); return
 // 步驟順序：必填（軀幹、下巴）設定完自動跳下一步；其他的有「跳過 / 完成」
 const WIZ_ORDER = ['torso', 'neck', 'hair', 'navel', 'ear', 'tail'], WIZ_REQ = new Set(['torso', 'neck']);
 const wizHas = k => WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length > 0 : !!wiz[k];
+// 清掉某一步放的東西（點 / 線），步驟切回那一步
+function wizClearStep(k) {
+  if (WIZ_SEGS[k]) wiz[WIZ_SEGS[k].key] = [];
+  else wiz[k] = null;
+  wiz.hist = wiz.hist.filter(h => h !== k);
+  wiz.pend = null;
+  wiz.step = k;
+  renderWizard();
+}
 function wizNext() {
   const i = WIZ_ORDER.indexOf(wiz.step);
   wiz.step = i < 0 ? null : WIZ_ORDER[i + 1] || null;
@@ -2973,7 +2996,8 @@ function renderWizard() {
     const n = WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length : 0;
     const note = WIZ_REQ.has(k) ? '必填' : n ? `${n} ${k === 'hair' ? '撮' : k === 'tail' ? '條' : '個'}` : k === 'navel' && wiz.navel ? '以下為下半身' : '';
     return el('div', { class: 'wstep' + (wizHas(k) ? ' done' : '') + (wiz.step === k ? ' cur' : ''), onclick: () => { wiz.step = k; wiz.pend = null; renderWizard(); } },
-      el('i', { class: 'wdot' }), el('b', {}, t), note ? el('span', { class: 'note' + (WIZ_REQ.has(k) ? ' req' : '') }, note) : null);
+      el('i', { class: 'wdot' }), el('b', {}, t), note ? el('span', { class: 'note' + (WIZ_REQ.has(k) ? ' req' : '') }, note) : null,
+      wizHas(k) ? el('button', { class: 'tb icon wtrash', title: '清掉這一步', onclick: e => { e.stopPropagation(); wizClearStep(k); } }, ico('trash')) : null);
   });
   const head = el('div', { class: 'whead' }, '快速建模（單圖層）', el('span', { class: 'grow' }),
     el('button', { class: 'tb', title: '復原一步（Delete / Backspace / Ctrl+Z）', disabled: wiz.pend || wiz.hist.length ? null : 'disabled', onclick: wizUndo }, '↶'),
