@@ -398,6 +398,9 @@ const Model = (() => {
     return E;
   }
   const delayOf = n => n.params && n.params.off && n.params.off.delay ? 0 : n.delay || 0;
+  // 相位（n.phase，單位 1/32 循環）：整個部位「晚多少」— 自己的動作、跟著父層（含整體）的移動、底下的子層全部一起晚
+  // （延遲只晚自己的動作，跟著父層的移動不會晚）
+  const phaseOf = n => n.type === 'root' || (n.params && n.params.off && n.params.off.phase) ? 0 : n.phase || 0;
   const localT = (data, n, t) => t - delayOf(n) * unitOf(data);
   // 總體：旋轉角（弧度）、縮放、動作組用的上下位移
   function overall(data, n, t) {
@@ -677,16 +680,36 @@ const Model = (() => {
       evals.set(n.id, {
         parent: null, _D: undefined,
         get D() {
-          if (this._D === undefined) this._D = animate && n.type !== 'root' ? makeDeformer(data, n, t, ctx, depth) : null;
+          if (this._D === undefined) this._D = animate && n.type !== 'root' ? makeDeformer(data, n, t - phaseOf(n) * unitOf(data), ctx, depth) : null;
           return this._D;
         },
       });
     }
     for (const n of data.nodes) evals.get(n.id).parent = n.parent ? evals.get(n.parent) || null : null;
+    // 相位：父層（含整體）改用較早時間的變形；整體的變換在畫的時候用現在的時間套，這裡先換算成較早時間的
+    if (animate) for (const n of data.nodes) {
+      const ph = phaseOf(n);
+      if (!ph || !n.parent || n.follow) continue;
+      const tp = t - ph * unitOf(data);
+      let pe, G = null;
+      evals.get(n.id).parent = {
+        parent: null,
+        D: (x, y) => {
+          if (pe === undefined) {
+            pe = ctx.evalsAt(tp, depth).get(n.parent) || null;
+            const g0 = globalAffine(data, t), g1 = globalAffine(data, tp);
+            if (g0.some((v, i) => Math.abs(v - g1[i]) > 1e-9)) G = aMul(aInv(g0), g1);
+          }
+          const o = applyChain(pe, x, y);
+          if (G) { const q = aApply(G, o[0], o[1]); OUT[0] = q[0]; OUT[1] = q[1]; }
+          return OUT;
+        },
+      };
+    }
     // 依循父層的指定錨點（n.follow = 父層錨點 id）：整個子層只跟著那個錨點的位移平移，不被父層的變形拉扯
     for (const n of data.nodes) {
       if (!n.follow || !animate) continue;
-      const par = n.parent && byId(data, n.parent), pin = par && par.pins.find(p => p.id === n.follow), pe = par && evals.get(par.id);
+      const par = n.parent && byId(data, n.parent), pin = par && par.pins.find(p => p.id === n.follow), pe = par && (phaseOf(n) ? ctx.evalsAt(t - phaseOf(n) * unitOf(data), depth).get(par.id) : evals.get(par.id));
       if (!pin || !pe) continue;
       let dx = null, dy = 0;
       evals.get(n.id).parent = {

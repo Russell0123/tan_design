@@ -4428,7 +4428,8 @@ function renderParams() {
   box.append(
     el('div', { class: 'frow' }, el('label', {}, ''), checkbox('左右鏡像', () => n.mirror, v => { n.mirror = v; })),
     groupToggle('總體', P, MAIN_KEYS, '整個部位以支點（紅）為中心的動作；越靠近支點越柔和。左邊圓點 = 整組開關'),
-    slider('延遲', () => n.delay || 0, v => { n.delay = v; }, { mute: [P, 'delay'], min: -16, max: 16, step: 1, tip: '單位 1/32 循環；這個部位相對父層晚多少（負值 = 提早），16 = 半個循環' }),
+    slider('相位', () => n.phase || 0, v => { n.phase = v; }, { mute: [P, 'phase'], min: 0, max: 32, step: 1, tip: '單位 1/32 循環；整個部位晚多少：自己的動作、跟著父層的移動、底下的子層全部一起晚（16 = 半個循環）' }),
+    slider('延遲', () => n.delay || 0, v => { n.delay = v; }, { mute: [P, 'delay'], min: -16, max: 16, step: 1, tip: '單位 1/32 循環；只有這個部位自己的動作晚多少（負值 = 提早），跟著父層的移動不變；16 = 半個循環' }),
     freqSlider('頻率', () => P.curve || (P.curve = { ...Model.partCurve(D.data, P) }), `${n.name}：總體動作的曲線`, '旋轉、位移、壓扁拉伸每個循環來回幾次（0.5 為單位）；小扳手調曲線形狀'),
     slider('旋轉角度', () => P.angle, v => { P.angle = v; }, { mute: [P, 'angle'], min: -45, max: 45, step: 0.5, dec: 1, tip: '度' }),
     slider('縮放', () => P.gravity, v => { P.gravity = v; }, { mute: [P, 'gravity'], min: 0, max: 0.1, step: 0.005, scale: 100, dec: 1, tip: '% 自然縮放：100 → 100+x → 100（每半個循環一次）' }),
