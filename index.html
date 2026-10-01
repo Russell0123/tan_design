@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>彈design</title>
+<link rel="stylesheet" href="css/style.css?v=81">
+</head>
+<body>
+<header class="topbar">
+  <button class="brand" id="brand" title="選單：開啟、儲存、輸出、範例、快捷鍵設定、說明">彈design ▾</button>
+  <label class="tb icon" title="開啟圖片 / PSD / 專案（新分頁）"><span data-ico="open"></span><input type="file" id="fileOpen" accept=".apng,.png,.jpg,.jpeg,.webp,.gif,.psd,.puppet" multiple hidden></label>
+  <button class="tb icon" id="btnSave" title="儲存專案 (Ctrl+S)"><span data-ico="save"></span></button>
+  <select id="demoSel" class="tbsel" title="開啟範例（新分頁）">
+    <option value="">範例…</option>
+    <option value="girl">紫髮女孩（單層 Q 版）</option>
+    <option value="whitePsd">白髮女孩（分層・立體）</option>
+    <option value="blink">棕髮女孩（眨眼）</option>
+  </select>
+  <span class="sep"></span>
+  <button class="tb icon" id="btnUndo" title="復原 (Ctrl+Z)"><span data-ico="undo"></span></button>
+  <button class="tb icon" id="btnRedo" title="重做 (Ctrl+Y)"><span data-ico="redo"></span></button>
+  <span class="grow"></span>
+  <button class="btn" id="btnMode" title="切換到簡易模式">簡易模式</button>
+  <button class="tb accent" id="btnExport" title="輸出動畫"><span data-ico="export"></span>輸出</button>
+</header>
+<nav class="tabbar" id="tabbar"></nav>
+
+<main class="layout" id="layout">
+  <div class="pstrip left"><button class="pcol" id="btnHideLeft" title="收起左側">«</button></div>
+  <div class="pstrip right"><button class="pcol" id="btnHideRight" title="收起右側">»</button></div>
+  <aside class="panel left">
+    <div class="phead">
+      <span class="ptitle">部位</span>
+      <div class="pact">
+        <button class="tb icon" id="btnAddPart" title="新增部位（加在選取的部位底下）"><span data-ico="plus"></span></button>
+        <button class="tb icon" id="btnAddLayer" title="加入圖層（PNG / PSD，可多選）"><span data-ico="layers"></span></button>
+        <button class="tb icon" id="btnDelete" title="刪除選取的部位 (Delete)"><span data-ico="trash"></span></button>
+      </div>
+    </div>
+    <div class="tree" id="tree"></div>
+    <div class="hsplit" data-var="--orderH" data-dir="-1"></div>
+    <div class="phead" id="orderHead"><span class="ptitle" title="上面的圖層在前方">圖層</span><div class="pact"><button class="tb icon" id="btnGroup" title="群組：Ctrl / Shift 點選多個圖層後按，組起來可以一起移動（變形工具）"><span data-ico="folder"></span></button></div></div>
+    <div class="depthbar" id="depthBar"></div>
+    <div class="orderlist" id="orderList"></div>
+  </aside>
+  <div class="vsplit" data-var="--lw" data-dir="1"></div>
+
+  <section class="stage-wrap">
+    <div class="toolbar">
+      <div class="tools" id="tools"></div>
+      <span class="sep"></span>
+      <div class="seg" id="modeSeg">
+        <button data-mode="edit" class="on">編輯</button>
+        <button data-mode="preview">預覽</button>
+      </div>
+      <span class="grow"></span>
+      <button class="tb icon toggle on" id="tglRegion" title="顯示範圍（牽連範圍預覽）"><span data-ico="region"></span></button>
+      <button class="tb icon toggle on" id="tglPins" title="顯示錨點"><span data-ico="pin"></span></button>
+      <button class="tb icon toggle" id="tglMesh" title="顯示網格"><span data-ico="mesh"></span></button>
+    </div>
+    <div class="toolstrip" id="toolStrip">
+      <span class="tsname" id="toolName"></span>
+      <div class="tsbody" id="toolDetail"></div>
+      <button class="tb icon" id="btnStripClose" title="收起（點工具會再出現）"><span data-ico="close"></span></button>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="glCanvas"></canvas>
+      <canvas id="overlay"></canvas>
+      <button class="tb icon slayerbtn" id="btnSLayers" title="圖層"><span data-ico="layers"></span></button>
+      <div class="sviews"><button class="tb icon toggle" id="sPins" title="顯示錨點（可以拖曳調整，不能新增或刪除）"><span data-ico="pin"></span></button><button class="tb icon toggle" id="sRange" title="顯示範圍（目前分頁的類型；整體分頁 = 全部）"><span data-ico="region"></span></button></div>
+      <div class="stagecorner"><button class="tb icon toggle" id="tglBg" title="背景：切換深色 / 白色網格"><span data-ico="bgtone"></span></button><button class="tb icon" id="btnFit" title="重設視角"><span data-ico="fit"></span></button></div>
+      <div class="drop" id="dropHint"><div class="drop-inner"><div class="big">拖放圖片或 PSD 到這裡</div><div>或使用「開啟」「範例」</div></div></div>
+      <div class="status" id="status"></div>
+      <div class="probe probe-h hidden" id="probeH" title="試轉 左右：拖曳直接看轉向效果；雙擊歸零"><input type="range" min="-1" max="1" step="0.01" value="0"></div>
+      <div class="probe probe-v hidden" id="probeV" title="試轉 上下：拖曳直接看俯仰效果；雙擊歸零"><input type="range" min="-1" max="1" step="0.01" value="0"></div>
+    </div>
+    <div class="playbar">
+      <button class="tb icon" id="btnPlay" title="播放 / 暫停 (空白鍵)"><span data-ico="play"></span></button>
+      <button class="tb icon" id="btnPrev" title="上一幀 (←)"><span data-ico="prev"></span></button>
+      <button class="tb icon" id="btnNext" title="下一幀 (→)"><span data-ico="next"></span></button>
+      <input type="range" id="scrub" min="0" max="60" step="0.01" value="0">
+      <span id="frameLabel" class="mono">0 / 60</span>
+      <button class="tb toggle" id="btnTimeline" title="時間軸：用關鍵影格編輯位移、翻轉、前後順序、透明度">時間軸</button>
+      <select id="speedSel" class="tbsel" title="播放速度">
+        <option value="2">2×</option>
+        <option value="1" selected>1×</option>
+        <option value="0.5">0.5×</option>
+        <option value="0.25">0.25×</option>
+      </select>
+    </div>
+  </section>
+  <div class="vsplit" data-var="--rw" data-dir="-1"></div>
+
+  <aside class="spanel right" id="simpleR"><div class="wizdock" id="wizDock"></div><div class="slayerbox" id="simpleLayers"></div><div class="sbody" id="simpleBody"></div></aside>
+  <aside class="panel right">
+    <div class="rscroll">
+      <div class="phead"><span class="ptitle">屬性</span></div>
+      <div class="pbody" id="inspector"></div>
+      <div class="phead"><span class="ptitle">參數</span></div>
+      <div class="pbody" id="params"></div>
+    </div>
+  </aside>
+  <div class="hsplit tlsplit" data-var="--tlH" data-dir="-1"></div>
+  <div class="timeline hidden" id="timeline"></div>
+</main>
+
+<div id="popmenu" class="popmenu hidden"></div>
+<div id="modal" class="modal hidden"></div>
+<input type="file" id="fileLayer" accept=".png,.jpg,.jpeg,.webp,.psd" multiple hidden>
+<input type="file" id="fileVariant" accept=".png,.jpg,.jpeg,.webp" hidden>
+<input type="file" id="fileReplace" accept=".png,.jpg,.jpeg,.webp" hidden>
+<div id="toasts"></div>
+<div id="rotateHint" class="rotatehint"><div><b>請把手機轉成橫向</b><span>完整模式需要橫向的畫面；或切回簡易模式</span><button class="btn" id="btnBackSimple">回到簡易模式</button></div></div>
+
+<script src="js/icons.js?v=81"></script>
+<script src="js/anim.js?v=81"></script>
+<script src="js/mesh.js?v=81"></script>
+<script src="js/imgproc.js?v=81"></script>
+<script src="js/p3d.js?v=81"></script>
+<script src="js/headrig.js?v=81"></script>
+<script src="js/model.js?v=81"></script>
+<script src="js/blink.js?v=81"></script>
+<script src="js/renderer.js?v=81"></script>
+<script src="js/psd.js?v=81"></script>
+<script src="js/exporter.js?v=81"></script>
+<script src="js/project.js?v=81"></script>
+<script src="js/templates.js?v=81"></script>
+<script src="js/sample-girl.js?v=81"></script>
+<script src="js/sample-white-psd.js?v=81"></script>
+<script src="js/sample-blink.js?v=81"></script>
+<script src="js/demo.js?v=81"></script>
+<script src="js/app.js?v=81"></script>
+</body>
+</html>
