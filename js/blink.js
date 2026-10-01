@@ -173,5 +173,33 @@ const Blink = (() => {
     }
     return out;
   }
-  return { LEVELS, STYLES, styleOf, clampDur, durOf, at, slotOf, build };
+  // 眼睛是斜的（兩眼連線不是水平）：先把圖轉正（ang = 兩眼連線的角度，弧度）再算，算完轉回原本的角度
+  // 這樣閉合方向永遠垂直於兩眼連線
+  function buildTilted(eye, closed, lid, w, h, B, dil, ang) {
+    if (!ang || Math.abs(ang) < 0.3 * Math.PI / 180) return build(eye, closed, lid, w, h, B, dil);
+    const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
+    const W = Math.ceil(w * c + h * s) + 2, H = Math.ceil(w * s + h * c) + 2;
+    const src = document.createElement('canvas'); src.width = w; src.height = h;
+    const sg = src.getContext('2d');
+    const rot = arr => {
+      if (!arr) return null;
+      sg.clearRect(0, 0, w, h);
+      sg.putImageData(new ImageData(new Uint8ClampedArray(arr), w, h), 0, 0);
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const g = cv.getContext('2d');
+      g.translate(W / 2, H / 2); g.rotate(-ang); g.translate(-w / 2, -h / 2);
+      g.drawImage(src, 0, 0);
+      return g.getImageData(0, 0, W, H).data;
+    };
+    const outs = build(rot(eye), rot(closed), rot(lid), W, H, B, dil);
+    if (!outs) return null;
+    return outs.map(cv => {
+      const o = document.createElement('canvas'); o.width = w; o.height = h;
+      const g = o.getContext('2d');
+      g.translate(w / 2, h / 2); g.rotate(ang); g.translate(-W / 2, -H / 2);
+      g.drawImage(cv, 0, 0);
+      return o;
+    });
+  }
+  return { LEVELS, STYLES, styleOf, clampDur, durOf, at, slotOf, build, buildTilted };
 })();

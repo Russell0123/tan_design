@@ -226,8 +226,55 @@ function structSig(doc) {
 // 眨眼：用到的設定與素材圖層（位置 / 圖）變了才重算
 function blinkSig(doc, n) {
   const B = n.blink, src = id => { const s = id && Model.byId(doc.data, id); return s && s.image ? [s.image.assetId, s.image.x, s.image.y, s.image.scale, s.image.rot] : null; };
-  return [src(B.closedId), src(B.lidId), B.lidColor, B.lidAuto && src(n.parent), B.line, B.lash, B.low];
+  // 自動傾斜：其他眼睛圖層的位置也會影響
+  const eyes = B.tilt == null ? eyeLayers(doc, n).map(m => src(m.id)) : null;
+  return [src(B.closedId), src(B.lidId), B.lidColor, B.lidAuto && src(n.parent), B.line, B.lash, B.low, B.tilt, src(n.id), eyes];
 }
+// ---------- 眨眼的方向：垂直於兩眼連線 ----------
+const eyeLayers = (doc, n) => doc.data.nodes.filter(m => m !== n && m.type === 'image' && ((m.blink && m.blink.on) || m.role === 'eye'));
+// 圖層裡的不透明區塊（依欄分段）：回傳質心，大的在前
+function alphaClusters(rgba, w, h) {
+  const mass = new Float64Array(w), sy = new Float64Array(w);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const a = rgba[(y * w + x) * 4 + 3]; if (a > 60) { mass[x] += a; sy[x] += a * y; } }
+  const gap = Math.max(2, Math.round(w * 0.03)), out = [];
+  let cur = null, empty = 0;
+  for (let x = 0; x < w; x++) {
+    if (mass[x] > 0) {
+      if (!cur || empty > gap) { cur = { m: 0, sx: 0, sy: 0 }; out.push(cur); }
+      cur.m += mass[x]; cur.sx += mass[x] * x; cur.sy += sy[x]; empty = 0;
+    } else empty++;
+  }
+  return out.map(c => ({ m: c.m, x: c.sx / c.m, y: c.sy / c.m })).sort((a, b) => b.m - a.m);
+}
+// 兩眼連線的角度（弧度，在這個圖層的像素座標裡）
+//   1. 這個圖層裡就有兩隻眼睛：兩個區塊的質心連線
+//   2. 左右眼分開兩個圖層：和最近的另一個眼睛圖層的質心連線
+//   3. 都沒有：畫面的水平（圖層有旋轉時跟著換算）
+function eyeTilt(doc, n) {
+  const a = doc.assets.get(n.image.assetId);
+  if (!a || !a.rgba) return 0;
+  const norm = (vx, vy) => { if (vx < 0) { vx = -vx; vy = -vy; } return Math.max(-Math.PI / 4, Math.min(Math.PI / 4, Math.atan2(vy, vx))); };
+  const cl = alphaClusters(a.rgba, a.w, a.h), tot = cl.reduce((s, c) => s + c.m, 0);
+  if (cl.length >= 2 && cl[1].m > tot * 0.15) return norm(cl[1].x - cl[0].x, cl[1].y - cl[0].y);
+  const L = layerAffine(n.image, a), Li = aInv(L);
+  const own = cl.length ? aApply(L, cl[0].x, cl[0].y) : null;
+  let dir = [1, 0];
+  if (own) {
+    let best = null, bd = Infinity;
+    for (const m of eyeLayers(doc, n)) {
+      const b = doc.assets.get(m.image.assetId);
+      if (!b || !b.rgba) continue;
+      const c2 = alphaClusters(b.rgba, b.w, b.h)[0];
+      if (!c2) continue;
+      const p = aApply(layerAffine(m.image, b), c2.x, c2.y), d = Math.hypot(p[0] - own[0], p[1] - own[1]);
+      if (d > 1 && d < bd) { bd = d; best = p; }
+    }
+    if (best) dir = [best[0] - own[0], best[1] - own[1]];
+  }
+  // 畫面上的方向 → 圖層像素座標（只用線性部分）
+  return norm(Li[0] * dir[0] + Li[2] * dir[1], Li[1] * dir[0] + Li[3] * dir[1]);
+}
+const blinkTilt = (doc, n) => n.blink.tilt != null ? n.blink.tilt * DEG : eyeTilt(doc, n);
 // 另一個圖層畫到這個圖層的像素座標（RGBA）
 function layerInto(doc, srcNode, n, w, h) {
   const a = srcNode && srcNode.image && doc.assets.get(srcNode.image.assetId), me = doc.assets.get(n.image.assetId);
@@ -248,7 +295,7 @@ function blinkLevels(doc, n, rgba, w, h) {
   }
   let dil = 0;
   if (!lid && B.lidAuto) { lid = autoSkin(doc, n, rgba, w, h); dil = 2; }
-  return Blink.build(rgba, closed, lid, w, h, B, dil);
+  return Blink.buildTilted(rgba, closed, lid, w, h, B, dil, blinkTilt(doc, n));
 }
 // 自動補膚色：底下的圖（父層）在眼睛範圍內的像素，用周圍像皮膚的顏色一圈一圈往內補
 function autoSkin(doc, n, eyeRGBA, w, h) {
@@ -4096,7 +4143,10 @@ function renderBlinkUI(box, n) {
   if (!B.closedId) box.append(S('閉合線', 'line', 0.3, 0.9, 0.01, '沒有閉眼圖時：上下眼瞼在眼睛高度的哪裡合起來（0 上 … 1 下）'));
   box.append(
     S('上睫毛厚度', 'lash', 0.1, 0.8, 0.01, '往下移動的上睫毛帶有多厚（佔上半部的比例）；太薄睫毛會被切掉，太厚眼珠會跟著移動'),
-    S('下眼瞼', 'low', 0, 1, 0.01, '閉眼時下半部往上收多少'));
+    S('下眼瞼', 'low', 0, 1, 0.01, '閉眼時下半部往上收多少'),
+    // 傾斜：兩眼連線的角度，閉合方向垂直於它；預設自動偵測
+    slider('傾斜', () => B.tilt ?? Math.round(eyeTilt(D, n) / DEG * 10) / 10, v => { B.tilt = v; }, { min: -45, max: 45, step: 0.5, dec: 1, noLive: true, tip: `度；兩眼連線的角度，眼睛沿著垂直於它的方向閉上。${B.tilt == null ? '目前：自動偵測' : '目前：手動（按「自動」改回偵測）'}` }),
+    ...(B.tilt != null ? [el('div', { class: 'btnrow' }, el('button', { class: 'btn', onclick: () => { B.tilt = null; commit(); renderInspector(); } }, '傾斜改回自動'))] : []));
   // 試閉：拖曳時畫面直接顯示這個閉合程度
   const peek = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: 0 });
   peek.addEventListener('input', () => { D.ui.blinkPeek = { id: n.id, b: +peek.value }; });
