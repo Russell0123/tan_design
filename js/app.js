@@ -548,7 +548,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
