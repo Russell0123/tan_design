@@ -3,6 +3,8 @@ const Icons = (() => {
   const s = body => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
   const P = {
     bgtone: s('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 13.5l11-11v9.5a1.5 1.5 0 0 1-1.5 1.5z" fill="currentColor" stroke="none"/>'),
+    blend: s('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
+    clip: s('<path d="M4 2.5v6a2 2 0 0 0 2 2h7"/><path d="M10.5 8l2.5 2.5-2.5 2.5"/>'),
     timeline: s('<path d="M2 4h7M5 8h9M3 12h6"/><path d="M11 2.5v3M4 10.5v3"/>'),
     wrench: s('<path d="M10.3 2.2a3.4 3.4 0 0 0-3.6 4.5L2.3 11.1a1.4 1.4 0 0 0 2 2l4.4-4.4a3.4 3.4 0 0 0 4.5-3.6l-2 2-1.8-.5-.5-1.8z"/>'),
     dropper: s('<path d="M10.5 2.5l3 3-1.6 1.6-3-3zM9.3 3.9l2.8 2.8-6.3 6.3H3v-2.8z"/>'),

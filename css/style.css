@@ -629,3 +629,34 @@ html, body { touch-action: pan-x pan-y; }
 /* 載入時先看到主頁（開檔完成才收起來） */
 body.onhome > :not(#home):not(#modal):not(#popmenu):not(#toasts):not(script) { visibility: hidden; }
 .wizard .wstep .wtrash { margin-left: auto; width: 26px; height: 26px; opacity: .7; } .wizard .wstep .wtrash:hover { opacity: 1; color: #f87171; }
+
+/* ---------- 手機：防止下拉重新整理、點擊目標放大、長按不跳系統選單 ---------- */
+html, body { overscroll-behavior: none; }
+.home, .orderlist, .tree, .rscroll, .spanel .sbody, .tlbody { overscroll-behavior: contain; }
+button, .tb, .btn, .orow, .srow, .trow, .stabs button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+body { -webkit-touch-callout: none; }
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }   /* iPhone：小於 16px 一點就整頁放大 */
+  .tb { min-width: 40px; min-height: 40px; }
+  .tb.icon svg { width: 20px; height: 20px; }
+  .btn { min-height: 40px; padding-left: 14px; padding-right: 14px; }
+  .teye { min-width: 36px; min-height: 36px; justify-content: center; align-items: center; }
+  .pdot { width: 30px; height: 30px; }
+  .orow { min-height: 52px; }
+  .srow, .trow { min-height: 44px; }
+  .popmenu button { min-height: 44px; }
+  .stabs button { padding: 11px 14px; }
+  .prow .num { height: 34px; }
+  .sl { height: 36px; }
+  .sl input[type=range]::-webkit-slider-runnable-track { height: 36px; }
+  .sl input[type=range]::-webkit-slider-thumb { width: 26px; height: 26px; margin-top: 5px; }
+  .sl input[type=range]::-moz-range-thumb { width: 22px; height: 22px; }
+  .chk input { width: 22px; height: 22px; }
+  .wizard .wstep { padding-top: 12px; padding-bottom: 12px; }
+}
+/* 圖層區：混合模式 / 剪裁遮色片的圖示按鈕 */
+.depthbar .lbtns { display: flex; gap: 4px; justify-content: flex-end; padding: 2px 6px 0; }
+.depthbar .lbtns .tb.on { background: rgba(233,85,124,.85); color: #fff; }
+/* 簡易模式：快速建模 / 重新建模按鈕 */
+.spanel .sbuild { display: flex; padding: 8px 10px 0; }
+.spanel .sbuild .btn { display: inline-flex; align-items: center; gap: 6px; }

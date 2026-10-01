@@ -548,7 +548,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.5';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
@@ -687,6 +687,20 @@ function projectThumb() {
   c.getContext('2d').drawImage(renderer.canvas, 0, 0);
   return c;
 }
+// 手機（觸控）：用系統的「分享」（可以存到相簿 / 檔案 / 傳給別人）；不支援或被擋（太久沒點到畫面）時改用下載 / 再點一次分享
+const isTouch = () => matchMedia('(pointer: coarse)').matches;
+function saveBlob(blob, name) {
+  const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+  if (!(isTouch() && navigator.canShare && navigator.canShare({ files: [file] }))) { Exporter.download(blob, name); return; }
+  navigator.share({ files: [file], title: name }).catch(err => {
+    if (err && err.name === 'AbortError') return;
+    // 處理太久，瀏覽器不讓直接跳分享：給一個按鈕再點一次
+    const body = el('div', { class: 'dbody' }, el('div', { class: 'note' }, name));
+    const close = openDialog('完成', body, [
+      el('button', { class: 'btn', onclick: () => { close(); Exporter.download(blob, name); } }, '下載'),
+      el('button', { class: 'btn primary', onclick: () => { close(); navigator.share({ files: [file], title: name }).catch(() => {}); } }, '分享 / 儲存')]);
+  });
+}
 // 專案檔名 → 作品名稱（去掉 .彈design.png / .puppet 等副檔名）
 const projName = fn => fn.replace(/_tan\.a?png$/i, '').replace(/\.a?png$/i, '').replace(/\.(彈design|puppet)$/i, '').replace(/\.(jpe?g|webp|gif|psd)$/i, '') || fn;
 // 專案的動態預覽（APNG）：長邊 240px、每秒 10 格、播一次完整時間軸；看圖軟體 / 瀏覽器直接看得到動作
@@ -728,7 +742,7 @@ async function saveProject(as) {
       toast(`已儲存「${h.name}」`, 'info');
     } else {
       const blob = await Project.save(doc, projectThumb());
-      Exporter.download(blob, fname);
+      saveBlob(blob, fname);
       rememberRecent(doc, blob);
       toast('已儲存專案', 'info');
     }
@@ -904,7 +918,7 @@ function viewAffine() {
 function resize() {
   const r = $('#stage').getBoundingClientRect();
   view.cw = Math.max(1, r.width); view.ch = Math.max(1, r.height);
-  view.dpr = window.devicePixelRatio || 1;
+  view.dpr = Math.min(2, window.devicePixelRatio || 1);   // 手機 3 倍螢幕：最多畫 2 倍（省電、不卡）
   const o = $('#overlay'), W = Math.round(view.cw * view.dpr), H = Math.round(view.ch * view.dpr);
   if (o.width !== W || o.height !== H) { o.width = W; o.height = H; }
   if (D && D.ui.zoom === 1 && !D.ui.panX && !D.ui.panY) fitView();
@@ -1962,7 +1976,7 @@ function setupPointer() {
   const pos = e => { const r = ov.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   ov.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (!D) return;
+    if (!D || D.ui.simple) return;
     if (lasso) { lasso = null; return; }
     const [mx, my] = pos(e);
     if (tool.name === 'pin' && D.ui.mode === 'edit') {
@@ -2311,7 +2325,7 @@ function appMenu() {
     { label: '另存新檔…', hint: keyLabel(keyOf('saveAs')), disabled: !doc, run: () => saveProject(true) },
     { label: '輸出動畫…', icon: 'export', hint: keyLabel(keyOf('export')), disabled: !doc, run: openExport },
     '-',
-    { label: '快速建模（測試中）…', icon: 'auto', disabled: !doc, run: openWizard },
+    { label: doc && hasRigging() ? '重新建模' : '快速建模', icon: 'auto', disabled: !doc, run: startQuickBuild },
     '-',
     { label: '範例' },
     ...Object.entries(Demo.samples).map(([k, s]) => ({ label: s.label, run: () => openSample(k) })),
@@ -2544,7 +2558,7 @@ function exportLayerPNG(n) {
   const dr = D.cache.drawables.find(d => d.id === n.id);
   const c = n.type === 'image' ? D.assets.get(n.image.assetId).canvas : dr && dr.canvas;
   if (!c) { toast('這個部位目前沒有像素可匯出', 'warn'); return; }
-  c.toBlob(b => Exporter.download(b, `${n.name}.png`), 'image/png');
+  c.toBlob(b => saveBlob(b, `${n.name}.png`), 'image/png');
 }
 // 把獨立部位的像素烘焙成真正的圖層（之後可繪圖、匯出、取代）
 function bakeDetached(n) {
@@ -2588,11 +2602,27 @@ const WIZ_PARAMS = {
   arm: { angle: 1, amp: 0.05, swayFreq: 1, lag: 1, taper: 0.3, round: 0.15 },
 };
 let wiz = null;
-function openWizard() {
+function openWizard(opt0 = {}) {
   if (!D) { toast('請先開啟圖片或 PSD', 'warn'); return; }
   const images = D.data.nodes.filter(n => n.type === 'image');
-  if (images.length >= 2) wizardLayered(images);
-  else if (images.length === 1) wizardSingle(images[0]);
+  if (images.length >= 2) wizardLayered(images, opt0);
+  else if (images.length === 1) wizardSingle(images[0], opt0);
+}
+// 已經建過（有部位或錨點）→「重新建模」：整個從頭來（部位刪掉、圖層的錨點清掉、圖層都掛回整體；圖層的類型留著當預設）
+const hasRigging = () => !!D && D.data.nodes.some(n => (isPart(n) && n.type !== 'group') || (n.type === 'image' && n.pins.length));
+function startQuickBuild() {
+  if (!D) return;
+  if (hasRigging()) {
+    D.data.nodes = D.data.nodes.filter(n => n.type === 'root' || n.type === 'image' || n.type === 'group');
+    for (const n of D.data.nodes) {
+      if (n.type !== 'image') continue;
+      n.pins = []; n.parent = 'root'; n.enabled = true; delete n.simpleBase; delete n.follow; delete n.fromHost;
+      if (n.role && TYPES[n.role]) n.params = typeDefaults(n.role);
+    }
+    for (const n of D.data.nodes) if (n.type === 'group' && !D.data.nodes.some(c => c.parent === n.id)) n.parent = 'root';
+    commit(); renderAll();
+  }
+  openWizard(D.ui.simple ? { toSimple: true } : {});
 }
 const wizOptions = opt => [
   'profile' in opt ? field('畫風', seg([['chibi', 'Q 版'], ['normal', '正常比例']], () => opt.profile, v => { opt.profile = v; opt.preset = WIZ_PROFILES[v].preset; const s2 = document.querySelector('#modal select.wpreset'); if (s2) s2.value = opt.preset; }), 'Q 版：頭大、動作彈；正常比例：動作小、比較穩') : null,
@@ -3300,6 +3330,15 @@ function renderDepthBar() {
     return;
   }
   const drawable = n && Model.isDrawable(n);
+  // 圖層的混合模式、剪裁遮色片：圖示按鈕（說明在滑過去的提示）
+  if (n && n.type === 'image') {
+    const bm = n.blend || 'normal';
+    const bb = el('button', { class: 'tb icon' + (bm !== 'normal' ? ' on' : ''), title: `混合模式：${BLEND_MODES[bm]}` }, ico('blend'));
+    bb.addEventListener('click', () => { const r = bb.getBoundingClientRect(); showMenu(r.left, r.bottom + 2, Object.entries(BLEND_MODES).map(([k, t]) => ({ label: (bm === k ? '✓ ' : '') + t, run: () => { if (k === 'normal') delete n.blend; else n.blend = k; commit(); renderOrder(); renderDepthBar(); } }))); });
+    const cb = el('button', { class: 'tb icon' + (n.clip ? ' on' : ''), title: n.clip ? '剪裁遮色片：開（只顯示在下面那個圖層的範圍內）' : '剪裁遮色片：關' }, ico('clip'));
+    cb.addEventListener('click', () => { if (n.clip) delete n.clip; else n.clip = true; commit(); renderOrder(); renderDepthBar(); });
+    box.append(el('div', { class: 'lbtns' }, bb, cb));
+  }
   const op = slider('不透明', () => drawable ? n.opacity ?? 1 : 1, v => { if (drawable) n.opacity = v; }, { min: 0, max: 1, step: 0.01, scale: 100, dec: 0, noLive: true, tip: drawable ? '%；這個圖層的不透明度（預覽與輸出都會套用）' : '選取圖層才能調' });
   if (!drawable) op.classList.add('dis');
   box.append(op);
@@ -4223,8 +4262,6 @@ function renderInspector() {
     const a = D.data.assets[n.image.assetId];
     box.append(
       field('尺寸', el('span', {}, a ? `${a.w} × ${a.h}` : '—')),
-      selectField('混合模式', Object.entries(BLEND_MODES), () => n.blend || 'normal', v => { if (v === 'normal') delete n.blend; else n.blend = v; }, () => renderOrder(), '和底下圖層的混合方式'),
-      el('div', { class: 'frow' }, el('label', {}, ''), checkbox('剪裁遮色片（只顯示在下面那個圖層的範圍內）', () => !!n.clip, v => { if (v) n.clip = true; else delete n.clip; }, () => renderOrder())),
       el('div', { class: 'btnrow' },
         el('button', { class: 'btn', onclick: () => startReplace(n) }, '取代圖片'),
         el('button', { class: 'btn', onclick: () => exportLayerPNG(n) }, '匯出 PNG')),
@@ -4638,7 +4675,7 @@ async function runExport(st, progress, cancelled) {
         width: W, height: H, frames: Ng * (st.infinite ? 1 : st.loops), fps: gf, loops: st.infinite ? 0 : 1, transparent: !bgColor,
         frameAt: f => { renderG(f); return og.getImageData(0, 0, W, H); }, progress, cancelled,
       });
-      if (blob) Exporter.download(blob, `${name}.gif`);
+      if (blob) saveBlob(blob, `${name}.gif`);
     } else if (st.fmt === 'png') {
       const files = [];
       for (let f = 0; f < N * st.loops; f++) {
@@ -4650,23 +4687,23 @@ async function runExport(st, progress, cancelled) {
         progress((f + 1) / (N * st.loops));
         if (f % 6 === 5) await new Promise(r => setTimeout(r, 0));
       }
-      Exporter.download(Exporter.zip(files), `${name}_png.zip`);
+      saveBlob(Exporter.zip(files), `${name}_png.zip`);
     } else if (st.fmt === 'apng') {
       const blob = await Exporter.apng({
         width: W, height: H, frames: N * (st.infinite ? 1 : st.loops), fps, loops: st.infinite ? 0 : 1,
         framePng: f => { render(f); const bin = atob(out.toDataURL('image/png').split(',')[1]), d = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) d[i] = bin.charCodeAt(i); return d; },
         progress, cancelled,
       });
-      if (blob) Exporter.download(blob, `${name}.png`);
+      if (blob) saveBlob(blob, `${name}.png`);
     } else if (Exporter.canEncode()) {
       const blob = await Exporter.encodeVideo({ kind: st.fmt, canvas: out, fps, frames: N * st.loops, drawFrame: render, progress, cancelled });
-      if (blob) Exporter.download(blob, `${name}.${st.fmt}`);
+      if (blob) saveBlob(blob, `${name}.${st.fmt}`);
       else if (!cancelled()) throw new Error('這個瀏覽器無法編碼此格式，請改用另一種格式');
     } else {
       const mime = Exporter.pickMime(st.fmt);
       if (!mime) throw new Error(st.fmt === 'mp4' ? '這個瀏覽器不支援錄製 MP4，請改用 WebM 或最新版 Chrome / Edge' : '這個瀏覽器不支援錄製 WebM');
       const blob = await Exporter.video({ canvas: out, fps, frames: N * st.loops, mime, drawFrame: render, progress, cancelled });
-      if (blob) Exporter.download(blob, `${name}.${st.fmt}`);
+      if (blob) saveBlob(blob, `${name}.${st.fmt}`);
     }
   } finally {
     exporting = false;
@@ -5676,7 +5713,7 @@ async function showHome() {
       el('div', { class: 'hdiv' }),
       el('div', { class: 'hcol grow' }, el('div', { class: 'hsec' }, '近期存取'), grid)));
 }
-function hideHome() { const h = $('#home'); if (h) h.classList.add('hidden'); document.body.classList.remove('onhome'); }
+function hideHome() { const h = $('#home'); if (h) h.classList.add('hidden'); document.body.classList.remove('onhome'); navTrap(); }
 // 新增：完整模式（A）或快速建立（B 單張 / C 分層）
 function openNewDialog() {
   const pick = (kind, accept) => () => {
@@ -5896,7 +5933,8 @@ function renderSimple() {
     el('button', { class: tab === 'root' ? 'on' : '', onclick: () => { D.ui.sptab = 'root'; renderSimple(); } }, '整體'),
     ...groups.map(g => el('button', { class: tab === g.key ? 'on' : '', onclick: () => { D.ui.sptab = g.key; renderSimple(); } }, g.label)));
   const pane = el('div', { class: 'spane' });
-  body.append(tabs, pane);
+  const build = el('div', { class: 'sbuild' }, el('button', { class: 'btn', onclick: startQuickBuild }, ico('auto'), hasRigging() ? '重新建模' : '快速建模'));
+  body.append(build, tabs, pane);
   if (tab === 'root') { renderSimpleRoot(pane); return; }
   const g = groups.find(x => x.key === tab), nodes = g.nodes, first = nodes.find(isChain) || nodes[0];
   const on = nodes.some(n => n.enabled !== false);
@@ -5929,6 +5967,7 @@ function simpleOverlay(M, evals) {
 // 整體：整體動作、時間軸、外框（不分區塊；整體運動、緩動、網格不顯示）；往下是立體（多圖層才有）
 function renderSimpleRoot(pane) {
   renderRootParams(pane, node('root'));
+  { const G = node('root').params; pane.prepend(el('div', { class: 'frow' }, el('label', {}, ''), checkbox('動態', () => G.enabled !== false, v => { G.enabled = v; }, renderSimple))); }
   const kids = [...pane.children];
   let drop = false;
   for (const c of kids) {
@@ -5943,6 +5982,46 @@ function renderSimpleRoot(pane) {
     slider('左右角度', () => S.yaw, v => { S.yaw = v; }, { min: 0, max: 40, step: 0.5, dec: 1, noLive: true, tip: '度；最大轉向角' }),
     el('div', { class: 'btnrow' }, el('button', { class: 'btn', title: '越上層越靠前', onclick: () => { P3D.depthByOrder(D.data); commit(); renderAll(); } }, '產生深度')));
 }
+
+// ---------- 觸控：長按 = 右鍵選單 ----------
+let longPress = null;
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  clearTimeout(longPress && longPress.timer);
+  const t = e.target, x = e.clientX, y = e.clientY;
+  longPress = { x, y, timer: setTimeout(() => {
+    if (!longPress) return;
+    longPress.fired = true;
+    t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    if (navigator.vibrate) navigator.vibrate(12);
+  }, 500) };
+}, true);
+document.addEventListener('pointermove', e => { if (longPress && Math.hypot(e.clientX - longPress.x, e.clientY - longPress.y) > 10) { clearTimeout(longPress.timer); longPress = null; } }, true);
+const endLong = () => {
+  if (!longPress) return;
+  clearTimeout(longPress.timer);
+  if (longPress.fired) document.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });   // 長按放開不算點
+  longPress = null;
+};
+document.addEventListener('pointerup', endLong, true);
+document.addEventListener('pointercancel', () => { if (longPress) { clearTimeout(longPress.timer); longPress = null; } }, true);
+// 系統自己的長按選單（Android）已經跳出時，不要再補一次
+document.addEventListener('contextmenu', e => { if (longPress && !longPress.fired && e.isTrusted) { clearTimeout(longPress.timer); longPress = null; } }, true);
+
+// ---------- 返回鍵：回上一頁（先關選單 / 對話框 / 快速建模 / 圖層面板，沒有東西開著就回主頁），不會直接離開網站 ----------
+// 做法：在編輯畫面時，歷史紀錄裡固定留一筆「陷阱」；按返回 = 處理最上層，還在編輯畫面就再補一筆
+function navTrap() { if (!(history.state && history.state.tan === 'app')) { try { history.pushState({ tan: 'app' }, ''); } catch (_) { /* ignore */ } } }
+window.addEventListener('popstate', () => {
+  const m = $('#modal'), body = document.body;
+  let handled = true;
+  if (!$('#popmenu').classList.contains('hidden')) hideMenu();
+  else if (!m.classList.contains('hidden')) { m.classList.add('hidden'); m.onclick = null; }
+  else if (wiz) cancelWizard();
+  else if (body.classList.contains('wizon')) { const c = $('#wizDock .wfoot button'); if (c) c.click(); }
+  else if (body.classList.contains('slayers')) body.classList.remove('slayers');
+  else handled = false;
+  if (!body.classList.contains('onhome')) { if (handled) navTrap(); else showHome(); }
+});
 
 // ---------- 初始化 ----------
 function init() {
