@@ -595,7 +595,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.7';
+const APP_VERSION = '1.0.8';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
@@ -2660,6 +2660,10 @@ function bakeDetached(n) {
 // 單張圖：在畫面上依序點「軀幹」（胸口中心）「下巴」、（可選）每撮頭髮的髮根 → 髮尾
 const WIZ_EXTRA = [['eyeclosed', '閉眼差分'], ['eyelid', '眼皮（遮擋用）']];
 const wizBase = r => r && TYPES[r] ? Model.baseType(r) : r;
+// 軀幹：支點在腰（胸口偏下），整個上半身微微彈跳旋轉，不做鏈的擺動（參考手動調整的範例 0917）
+const WIZ_TORSO = { angle: -2, amp: 0, inertia: 0, gravity: 0.005, curve: { shape: 'bounce', freq: 1, phase: 0.25 } };
+// 層次間的自然延遲（用「延遲」）：鬆的東西（尾巴、腿、飾品）+2；成對的第二個錯開；硬連接（頭、手臂）0
+const WIZ_DELAY = { tail: 2, leg: 2, accessory: 2, ribbon: 2, hem: 0, figure: 2 };
 const WIZ_HEADKIDS = new Set(['feature', 'eye', 'nose', 'mouth', 'brow', 'fronthair', 'hair', 'backhair', 'ear', 'eyeclosed', 'eyelid']);
 // 深度：參考「白髮女孩（分層）」範例調好的數值（頭 0.15）
 const WIZ_DEPTH = { head: 0.15, feature: 0.3, eye: 0.32, nose: 0.34, mouth: 0.32, brow: 0.33, eyeclosed: 0.32, eyelid: 0.32, fronthair: 0.45, hair: 0.4, backhair: 0, ear: 0.1, torso: 0, arm: 0.4, leg: -0.3, tail: -0.4, accessory: 0.2 };
@@ -2671,7 +2675,9 @@ const WIZ_PARAMS = {
   fronthair: { amp: 0.08, swayFreq: 1, lag: 1, inertia: 0.7, gravity: 0.035, taper: 1, round: 0.3 },
   hair: { amp: 0.1, swayFreq: 1, lag: 2, inertia: 0.4, gravity: 0.02, taper: 0.8, round: 0.2 },
   backhair: { amp: 0.13, swayFreq: 1, lag: 4, inertia: 0.22, gravity: 0.012, taper: 0.6, round: 0.12 },
-  tail: { angle: 4, amp: 0.1, swayFreq: 1, lag: 2, inertia: 0.3, gravity: 0.02, taper: 0.8, round: 0.35 },
+  tail: { angle: 4, amp: 0.16, swayFreq: 1, lag: 3, inertia: 0.19, taper: 1.15, round: 0.05 },
+  // 腿（坐姿等）：短鏈微動
+  leg: { angle: 0, amp: 0.03, swayFreq: 1, lag: 2, taper: 1, round: 0.25, inertia: 0.29 },
   accessory: { amp: 0.06, swayFreq: 1, lag: 2, inertia: 0.4, gravity: 0.015, taper: 1, round: 0.3 },
   arm: { angle: 1, amp: 0.05, swayFreq: 1, lag: 1, taper: 0.3, round: 0.15 },
 };
@@ -2927,42 +2933,83 @@ function wizardBuildLayered(pick, opt) {
   let made = 0;
   const M = Math.max(data.width, data.height);
   const ofB = b => imgs.filter(n => B(n) === b);
-  const torsoImg = ofB('torso')[0], headImg = ofB('head')[0] || ofB('feature')[0];
-  // 沒有指定「頭」時，用臉的圖層當頭（五官要在頭底下，所以它自己改成頭）
-  if (headImg && B(headImg) === 'feature') headImg.role = 'head';
-  const hb = headImg && nodeBounds(headImg), tb = torsoImg && nodeBounds(torsoImg);
-  // 脖子：頭和身體重疊的地方（下巴壓在領口上）；沒有重疊時用頭圖層下緣
-  const neck = headImg ? neckOf(headImg) : null;
-  // 1. 軀幹：身體圖層底下一條脊椎鏈（支點在脖子，往下 3 點）
-  let torsoPart = null;
-  if (torsoImg) {
+  // 同一張圖有好幾個人物：每個身體圖層各建一組，頭依脖子壓在哪個身體上配對，其他東西配給最近的頭 / 身體
+  const torsos = ofB('torso');
+  let heads = ofB('head');
+  // 範圍一律用圖層自己的（掛上子層後 nodeBounds 會把子層算進去，配對會錯）
+  const OB = new Map(imgs.map(n => [n, ownBounds(n)])), obOf = n => OB.get(n) || ownBounds(n);
+  const rectDist = (b, x, y) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.y0 - y, 0, y - b.y1));
+  const ctrOf = n => { const b = obOf(n); return [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]; };
+  const nearestOf = (list, n) => { const [x, y] = ctrOf(n); let best = null, bd = Infinity; for (const m of list) { const b = obOf(m), d = rectDist(b, x, y) * 4 + Math.hypot((b.x0 + b.x1) / 2 - x, (b.y0 + b.y1) / 2 - y); if (d < bd) { bd = d; best = m; } } return best; };
+  // 沒有「頭」圖層的人物：用最靠近那個身體的臉圖層當頭（五官要在頭底下，所以它自己改成頭）
+  const faces = ofB('feature');
+  if (torsos.length) {
+    for (const t of torsos) {
+      if (heads.some(h => nearestOf(torsos, h) === t)) continue;
+      const f = faces.filter(f => !heads.includes(f) && nearestOf(torsos, f) === t).sort((a, b) => { const A = obOf(a), Bb = obOf(b); return (Bb.x1 - Bb.x0) * (Bb.y1 - Bb.y0) - (A.x1 - A.x0) * (A.y1 - A.y0); })[0];
+      if (f) { f.role = 'head'; heads.push(f); }
+    }
+  } else if (!heads.length && faces[0]) { faces[0].role = 'head'; heads = [faces[0]]; }
+  const necks = new Map(heads.map(h => [h, neckOf(h)]));
+  // 頭 → 身體：脖子點落在哪個身體的不透明處；都沒有就取最近的
+  const torsoOfHead = new Map();
+  for (const h of heads) {
+    const nk = necks.get(h);
+    let best = null, bd = Infinity;
+    for (const t of torsos) { const d = layerSampler(t).at(nk[0], nk[1] + nk[2] * 0.06) > 60 ? -1 : rectDist(obOf(t), nk[0], nk[1]); if (d < bd) { bd = d; best = t; } }
+    if (best) torsoOfHead.set(h, best);
+  }
+  // 1. 軀幹：支點在腰（胸口偏下），往上到脖子；第二個以後的人物錯開延遲
+  const torsoNodes = new Map();   // 身體圖層 → 掛東西用的節點（軀幹部位，沒建成就是圖層本身）
+  torsos.forEach((torsoImg, fi) => {
+    const tb = obOf(torsoImg), S = layerSampler(torsoImg);
+    const h = heads.find(x => torsoOfHead.get(x) === torsoImg), neck = h && necks.get(h);
     const nk = neck && [neck[0], Math.round(neck[1] + neck[2] * 0.06)];
-    const S = layerSampler(torsoImg), top = nk && nk[1] >= tb.y0 && nk[1] < tb.y1 && S.at(nk[0], nk[1]) > 60 ? nk : [Math.round((tb.x0 + tb.x1) / 2), Math.round(tb.y0 + (tb.y1 - tb.y0) * 0.08)];
-    const bot = [top[0], Math.round(tb.y0 + (tb.y1 - tb.y0) * 0.62)];
-    const pins = spinePins(S, top, bot[1], 3);
+    const top = nk && nk[1] >= tb.y0 && nk[1] < tb.y1 && S.at(nk[0], nk[1]) > 60 ? nk : [Math.round((tb.x0 + tb.x1) / 2), Math.round(tb.y0 + (tb.y1 - tb.y0) * 0.08)];
+    const waist = Math.round(top[1] + (tb.y0 + (tb.y1 - tb.y0) * 0.62 - top[1]) * 0.55);
+    const pins = spinePins(S, top, waist, 3).reverse();   // 支點（腰）在第一個
+    let node = torsoImg;
     if (pins.length >= 2) {
-      torsoPart = addPart(D, 'torso', '軀幹', torsoImg.id, pins, { params: { ...typeDefaults('torso'), ...WIZ_PARAMS.torso } });
-      maskFromLayer(torsoPart, torsoImg);
+      node = addPart(D, 'torso', torsos.length > 1 ? `軀幹 ${fi + 1}` : '軀幹', torsoImg.id, pins, { delay: fi ? WIZ_DELAY.figure * fi : 0, params: { ...typeDefaults('torso'), ...WIZ_PARAMS.torso, ...WIZ_TORSO, curve: { ...WIZ_TORSO.curve } } });
+      maskFromLayer(node, torsoImg);
       made++;
     }
-  }
-  const torsoNode = torsoPart || torsoImg || null;
-  // 2. 頭：頭圖層掛在軀幹底下；頭部位（支點在下巴）掛在頭圖層底下，其他頭部的圖層再掛在頭部位底下
-  let headPart = data.nodes.find(n => n.type === 'head');
-  if (headImg) {
-    if (torsoNode && !Model.descendants(data, headImg.id).has(torsoNode.id)) headImg.parent = torsoNode.id;
-    if (!headPart) {
-      headPart = addPart(D, 'head', '頭', headImg.id, [neck.slice(0, 2)], { delay: 4, params: { ...typeDefaults('head'), ...WIZ_PARAMS.head, ...PF.head } });
-      maskFromLayer(headPart, headImg);
+    torsoNodes.set(torsoImg, node);
+  });
+  const torsoNodeFor = n => { const t = nearestOf(torsos, n); return t ? torsoNodes.get(t) : null; };
+  // 2. 頭：頭圖層掛在自己的身體底下；頭部位（支點在下巴）掛在頭圖層底下，其他頭部的圖層再掛在最近的頭部位底下
+  const headParts = new Map();
+  heads.forEach((headImg, hi) => {
+    const tn = torsoOfHead.get(headImg) ? torsoNodes.get(torsoOfHead.get(headImg)) : null;
+    if (tn && !Model.descendants(data, headImg.id).has(tn.id)) headImg.parent = tn.id;
+    let hp = data.nodes.find(n => n.type === 'head' && n.parent === headImg.id);
+    if (!hp) {
+      hp = addPart(D, 'head', heads.length > 1 ? `頭 ${hi + 1}` : '頭', headImg.id, [necks.get(headImg).slice(0, 2)], { delay: 4, params: { ...typeDefaults('head'), ...WIZ_PARAMS.head, ...PF.head } });
+      maskFromLayer(hp, headImg);
       made++;
     }
-  }
-  if (headPart) for (const n of imgs) if (n !== headImg && WIZ_HEADKIDS.has(B(n)) && !Model.descendants(data, n.id).has(headPart.id)) n.parent = headPart.id;
-  // 手臂、腿、尾巴、飾品：掛在軀幹底下（尾巴 / 觸手掛在整體，和範例一樣不跟著軀幹擺）
+    headParts.set(headImg, hp);
+  });
   for (const n of imgs) {
-    const b = B(n);
-    if (['arm', 'accessory', 'accflip', 'fixed', 'custom'].includes(b) && torsoNode && n !== torsoImg && !Model.descendants(data, n.id).has(torsoNode.id)) n.parent = n.parent === 'root' ? torsoNode.id : n.parent;
+    if (heads.includes(n) || !WIZ_HEADKIDS.has(B(n))) continue;
+    const h = nearestOf(heads, n), hp = h && headParts.get(h);
+    if (hp && !Model.descendants(data, n.id).has(hp.id)) n.parent = hp.id;
   }
+  // 手臂、飾品、布料：掛在最近的軀幹底下；腿掛在最近的身體圖層（不跟著上半身轉，腳才不會滑）；尾巴掛在整體
+  for (const n of imgs) {
+    const b = B(n), r = R(n);
+    // 固定物件（裝飾、背景小物）：只有一個人物時才跟著軀幹；好幾個人物時留在整體（不會被其中一個人帶著轉）
+    if ((['arm', 'accessory', 'accflip', 'custom'].includes(b) && r !== 'fixed' || (r === 'fixed' && torsos.length === 1)) && n.parent === 'root' && !torsos.includes(n)) {
+      const tn = torsoNodeFor(n);
+      if (tn && !Model.descendants(data, n.id).has(tn.id)) n.parent = tn.id;
+    }
+    if (b === 'leg' && n.parent === 'root') {
+      const t = nearestOf(torsos, n);
+      if (t && !Model.descendants(data, n.id).has(t.id)) n.parent = t.id;
+    }
+    void r;
+  }
+  const headPart = headParts.get(heads[0]) || null, headImg = heads[0] || null;
   // 3. 眨眼：眼睛圖層 + 閉眼差分 / 眼皮
   const eyes = imgs.filter(n => R(n) === 'eye');
   if (eyes.length) {
@@ -2977,14 +3024,16 @@ function wizardBuildLayered(pick, opt) {
     }
   }
   // 4. 擺動鏈
-  // 身體的重心（手臂、尾巴從最靠近它的一端開始長）
-  const center = (() => {
+  // 身體的重心（手臂、尾巴從最靠近它的一端開始長）；好幾個人物時用最近的身體
+  const centerOf = torsoImg => {
     if (!torsoImg) return [data.width / 2, data.height / 2];
-    const S = layerSampler(torsoImg), st = Math.max(2, Math.round((tb.x1 - tb.x0) / 120));
+    const tb = obOf(torsoImg), S = layerSampler(torsoImg), st = Math.max(2, Math.round((tb.x1 - tb.x0) / 120));
     let sx = 0, sy = 0, k = 0;
     for (let y = tb.y0; y <= tb.y1; y += st) for (let x = tb.x0; x <= tb.x1; x += st) if (S.at(x, y) > 120) { sx += x; sy += y; k++; }
     return k ? [sx / k, sy / k] : [(tb.x0 + tb.x1) / 2, (tb.y0 + tb.y1) / 2];
-  })();
+  };
+  const centers = new Map(torsos.map(t => [t, centerOf(t)]));
+  const centerFor = n => { const t = nearestOf(torsos, n); return t ? centers.get(t) : centerOf(null); };
   for (const n of imgs) {
     const b = B(n);
     if (data.nodes.some(c => c.parent === n.id && c.type !== 'image')) continue;   // 已經有部位的不動
@@ -2997,13 +3046,15 @@ function wizardBuildLayered(pick, opt) {
         p.region.radius = Math.round(M * 0.035);
         made++;
       });
-    } else if (['tail', 'accessory', 'accflip', 'arm'].includes(b) && opt.arm) {
-      // 從最靠近身體（或頭）的地方開始
-      const ref = center;
-      const chains = b === 'arm' ? branchChains(S, ref, 1) : branchChains(S, ref, 6);
+    } else if ((['tail', 'accessory', 'accflip', 'arm', 'leg'].includes(b) || ['hem', 'ribbon'].includes(R(n))) && opt.arm) {
+      // 從最靠近身體的地方開始；腿 / 手臂一條、衣襬左右各一條
+      const ref = centerFor(n), t = ['hem', 'ribbon'].includes(R(n)) ? R(n) : b === 'accflip' ? 'accessory' : b;
+      const chains = t === 'arm' || t === 'leg' ? branchChains(S, ref, 1) : t === 'hem' ? branchChains(S, ref, 2) : branchChains(S, ref, 6);
       chains.forEach((pins, i) => {
-        const p = addPart(D, b === 'arm' ? 'arm' : b === 'tail' ? 'tail' : 'accessory', `${n.name}・${i + 1}`, n.id, pins,
-          { mirror: i % 2 === 1, params: AMP({ ...typeDefaults(b === 'arm' ? 'arm' : b === 'tail' ? 'tail' : 'accessory'), ...WIZ_PARAMS[b === 'arm' ? 'arm' : b === 'tail' ? 'tail' : 'accessory'] }) });
+        // 延遲：鬆的東西（尾巴、腿、飾品、緞帶）+2；成對的第二個再錯開（衣襬 1）
+        const dl = (WIZ_DELAY[t] || 0) + (i % 2 ? (t === 'hem' ? 1 : 2) : 0);
+        const p = addPart(D, t, `${n.name}・${i + 1}`, n.id, t === 'leg' ? pins.slice(0, 3) : pins,
+          { mirror: i % 2 === 1, delay: t === 'arm' ? 0 : dl, params: AMP({ ...typeDefaults(t), ...(WIZ_PARAMS[t] || {}) }) });
         p.region.radius = Math.round(M * 0.05);
         made++;
       });
@@ -3011,16 +3062,19 @@ function wizardBuildLayered(pick, opt) {
   }
   // 5. 立體深度 / 頭部定位
   if (opt.depth) {
-    if (headPart && (P3D.nodeOf(headPart).depth ?? null) === null) P3D.nodeOf(headPart).depth = WIZ_DEPTH.head;
+    for (const hp of headParts.values()) if ((P3D.nodeOf(hp).depth ?? null) === null) P3D.nodeOf(hp).depth = WIZ_DEPTH.head;
     for (const n of imgs) { const P = P3D.nodeOf(n), b = B(n) || R(n); if (b && (P.depth === null || P.depth === undefined)) P.depth = WIZ_DEPTH[b] ?? 0; }
   }
-  if (opt.rig && headPart) {
-    const roles = {};
-    for (const n of imgs) if (n.parent === headPart.id || n === headImg) roles[n.id] = WIZ_RIG[B(n)] || 'accessory';
+  if (opt.rig && headParts.size) {
     ensureDerived(D);
-    createRig(headPart, { roles });
-    made++;
+    for (const [hImg, hp] of headParts) {
+      const roles = {};
+      for (const n of imgs) if (n.parent === hp.id || n === hImg) roles[n.id] = WIZ_RIG[B(n)] || 'accessory';
+      createRig(hp, { roles });
+      made++;
+    }
   }
+  void headPart; void headImg;
   wizardFinish(opt, made);
 }
 function wizardFinish(opt, made) {
@@ -3190,7 +3244,7 @@ function wizardBuildSingle() {
   const drawBand = (g, y0, y1) => { g.save(); g.beginPath(); g.rect(0, y0, W, y1 - y0); g.clip(); g.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]); g.drawImage(a.canvas, 0, 0); g.restore(); };
   let made = 0;
   const useNavel = navel && navel[1] > neck[1];
-  const torso = addPart(D, 'torso', '上半身', img.id, [wiz.torso], { params: { ...typeDefaults('torso') } });
+  const torso = addPart(D, 'torso', '上半身', img.id, [wiz.torso], { params: { ...typeDefaults('torso'), ...WIZ_TORSO, curve: { ...WIZ_TORSO.curve } } });
   paintMask(D, torso, g => drawBand(g, neck[1], useNavel ? navel[1] : H), false, true); made++;
   const head = addPart(D, 'head', '頭', torso.id, [neck], { delay: 4, params: { ...typeDefaults('head'), ...WIZ_PARAMS.head, ...PF.head } });
   paintMask(D, head, g => drawBand(g, 0, neck[1]), false, true); made++;
@@ -3204,8 +3258,9 @@ function wizardBuildSingle() {
   const HR = wizHairR(), amp = P => ({ ...P, amp: (P.amp || 0) * PF.amp });
   if (opt.hair) wiz.hair.forEach((s, i) => { const p = addPart(D, 'hair', `頭髮 ${i + 1}`, head.id, line(hairExt(s), 3), { delay: i % 2 ? 2 : 0, params: amp({ ...typeDefaults('hair'), ...WIZ_PARAMS.hair }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
   if (opt.other) {
-    wiz.ears.forEach((s, i) => { const p = addPart(D, 'ear', `獸耳 ${i + 1}`, head.id, line(s, 3), { mirror: i % 2 === 1, params: amp({ ...typeDefaults('ear') }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
-    wiz.tails.forEach((s, i) => { const p = addPart(D, 'tail', `尾巴 ${i + 1}`, hip ? hip.id : torso.id, line(s), { mirror: i % 2 === 1, params: amp({ ...typeDefaults('tail'), ...WIZ_PARAMS.tail }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
+    // 獸耳：兩隻同方向擺、第二隻延遲 2；尾巴延遲 2（成對再錯開 2）
+    wiz.ears.forEach((s, i) => { const p = addPart(D, 'ear', `獸耳 ${i + 1}`, head.id, line(s, 3), { delay: i % 2 ? 2 : 0, params: amp({ ...typeDefaults('ear') }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
+    wiz.tails.forEach((s, i) => { const p = addPart(D, 'tail', `尾巴 ${i + 1}`, hip ? hip.id : torso.id, line(s, 6), { mirror: i % 2 === 1, delay: WIZ_DELAY.tail + (i % 2 ? 2 : 0), params: amp({ ...typeDefaults('tail'), ...WIZ_PARAMS.tail }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
   }
   wiz = null; renderWizard(); wizDim(false);
   wizardFinish({ ...opt, rig: false, depth: false }, made);
@@ -4445,7 +4500,7 @@ function renderParams() {
   box.append(
     el('div', { class: 'frow' }, el('label', {}, ''), checkbox('左右鏡像', () => n.mirror, v => { n.mirror = v; })),
     groupToggle('總體', P, MAIN_KEYS, '整個部位以支點（紅）為中心的動作；越靠近支點越柔和。左邊圓點 = 整組開關'),
-    slider('相位', () => n.phase || 0, v => { n.phase = v; }, { mute: [P, 'phase'], min: 0, max: 32, step: 1, tip: '單位 1/32 循環；整個部位晚多少：自己的動作、跟著父層的移動、底下的子層全部一起晚（16 = 半個循環）' }),
+    slider('相位', () => n.phase || 0, v => { n.phase = v; }, { mute: [P, 'phase'], min: 0, max: 32, step: 0.25, dec: 2, tip: '單位 1/32 循環（最小 0.25 = 1/128 循環）；整個部位晚多少：自己的動作、跟著父層的移動、底下的子層全部一起晚（16 = 半個循環）' }),
     slider('延遲', () => n.delay || 0, v => { n.delay = v; }, { mute: [P, 'delay'], min: -16, max: 16, step: 1, tip: '單位 1/32 循環；只有這個部位自己的動作晚多少（負值 = 提早），跟著父層的移動不變；16 = 半個循環' }),
     freqSlider('頻率', () => P.curve || (P.curve = { ...Model.partCurve(D.data, P) }), `${n.name}：總體動作的曲線`, '旋轉、位移、壓扁拉伸每個循環來回幾次（0.5 為單位）；小扳手調曲線形狀'),
     slider('旋轉角度', () => P.angle, v => { P.angle = v; }, { mute: [P, 'angle'], min: -45, max: 45, step: 0.5, dec: 1, tip: '度' }),
@@ -4502,6 +4557,15 @@ function saveTypeDefaults(n) {
   catch (e) { toast('無法儲存預設：' + e.message, 'error'); }
 }
 // 部位 / 圖層 / 群組在文件座標中的範圍（臉部精細模式初始化用）
+// 只算圖層自己（不含子層）的範圍
+function ownBounds(n) {
+  const a = n.image && D.assets.get(n.image.assetId);
+  if (!a) return nodeBounds(n);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const T = layerAffine(n.image, a);
+  for (let y = 0; y < a.h; y += 2) for (let x = 0; x < a.w; x += 2) if (a.alpha[y * a.w + x] > 20) { const [X, Y] = aApply(T, x, y); if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+  return x1 < x0 ? nodeBounds(n) : { x0, y0, x1, y1 };
+}
 function nodeBounds(n) {
   const W = D.data.width, H = D.data.height;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -5883,10 +5947,10 @@ const SIMPLE_GROUPS = [
   ['ear', '耳朵', ['ear']],
   ['face', '五官', ['feature', 'eye', 'nose', 'mouth', 'brow']],
   ['torso', '上半身', ['torso']],
-  ['lower', '下半身', ['hip', 'leg', 'thigh', 'shin']],
+  ['lower', '下半身', ['hip', 'leg', 'thigh', 'shin', 'hem']],
   ['arm', '手臂', ['arm', 'upperarm', 'forearm', 'hand']],
   ['tail', '尾巴', ['tail']],
-  ['acc', '飾品', ['accessory', 'accflip', 'custom', 'fixed']],
+  ['acc', '飾品', ['accessory', 'accflip', 'ribbon', 'custom', 'fixed']],
 ];
 const simpleTypeOf = n => n.type === 'root' || n.type === 'group' ? null : n.type === 'image' ? (n.role && TYPES[n.role] ? n.role : null) : n.type;
 function simpleGroups() {

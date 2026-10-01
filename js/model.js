@@ -152,12 +152,13 @@ const Model = (() => {
     hair:      { label: '頭髮', icon: 'wave', color: '#ffb347', defaults: HAIR_TUNED },
     fronthair: { label: '前髮', icon: 'wave', color: '#fde68a', defaults: HAIR_TUNED },
     backhair:  { label: '後髮', icon: 'wave', color: '#d69a5a', defaults: HAIR_TUNED },
-    ear:       { label: '獸耳 / 耳朵', icon: 'rotate', color: '#f472b6', defaults: { ...STILL, angle: -6, shape: 'bounce', amp: 0.02, swayFreq: 2, lag: 1, inertia: 0.2 } },
+    // 獸耳 / 尾巴：參考手動調整的範例（0917）— 獸耳角度大、彈跳；尾巴幅度大、末端加強、節點延遲長
+    ear:       { label: '獸耳 / 耳朵', icon: 'rotate', color: '#f472b6', defaults: { ...STILL, angle: 20, shape: 'bounce', amp: 0.055, swayFreq: 2, lag: 1, taper: 1.1, round: 0.25, inertia: 0.2 } },
     feature:   { label: '臉', icon: 'eye', color: '#fb923c', defaults: STILL },
     eye:       { label: '眼睛', icon: 'eye', color: '#fdba74', defaults: STILL },
     arm:       { label: '手臂', icon: 'rotate', color: '#6ee7b7', defaults: { ...STILL, angle: 3 } },
     leg:       { label: '腿', icon: 'rotate', color: '#86efac', defaults: STILL },
-    tail:      { label: '尾巴', icon: 'wave', color: '#c084fc', defaults: { ...STILL, angle: 4, amp: 0.06, round: 0.3, swayFreq: 1, lag: 2, inertia: 0.25 } },
+    tail:      { label: '尾巴', icon: 'wave', color: '#c084fc', defaults: { ...STILL, angle: 4, amp: 0.16, round: 0.05, swayFreq: 1, lag: 3, taper: 1.15, inertia: 0.19 } },
     accessory: { label: '飾品（垂墜）', icon: 'wave', color: '#facc15', defaults: { ...STILL, amp: 0.05, round: 0.3, swayFreq: 2, lag: 2, inertia: 0.4, gravity: 0.015 } },
     custom:    { label: '自訂', icon: 'wave', color: '#94a3b8', defaults: { ...STILL, amp: 0.04, swayFreq: 1, lag: 2 } },
     // 細分類型：base = 行為沿用哪一種（深度預設、鏈、圖示），只換名稱與動作預設
@@ -175,6 +176,9 @@ const Model = (() => {
     shin:      { label: '小腿', base: 'leg', icon: 'rotate', color: '#86efac', defaults: { ...STILL, angle: 3 } },
     accflip:   { label: '飾品（翻轉）', base: 'accessory', icon: 'rotate', color: '#facc15', defaults: { ...STILL, angle: 8, shape: 'swing-sine' } },
     fixed:     { label: '固定物件', base: 'custom', icon: 'lock', color: '#94a3b8', defaults: STILL },
+    // 布料：參考手動調整的範例（0917 的「自訂 2」= 裙襬、「自訂」= 側邊緞帶）— 慣性高、節點延遲短
+    hem:       { label: '衣襬', base: 'custom', icon: 'wave', color: '#a78bfa', defaults: { ...STILL, amp: 0.12, swayFreq: 1, lag: 1, taper: 0.75, round: 0.3, inertia: 0.4 } },
+    ribbon:    { label: '緞帶 / 布料', base: 'accessory', icon: 'wave', color: '#facc15', defaults: { ...STILL, amp: 0.09, swayFreq: 1, lag: 1, taper: 0.75, round: 0.25, inertia: 0.37 } },
   };
   const baseType = t => (TYPES[t] && TYPES[t].base) || t;
   // 物件屬性 / 新增部位的分類選單（null = 直接選，不再展開）
@@ -182,8 +186,8 @@ const Model = (() => {
     ['頭部', ['head', 'fronthair', 'bangs', 'hair', 'backhair', 'hairflip', 'ahoge', 'ear']],
     ['五官', ['feature', 'eye', 'nose', 'mouth', 'brow']],
     ['上半身', ['torso', 'arm', 'upperarm', 'forearm', 'hand']],
-    ['下半身', ['hip', 'leg', 'thigh', 'shin']],
-    ['其他', ['tail', 'accflip', 'accessory', 'fixed', 'custom']],
+    ['下半身', ['hip', 'leg', 'thigh', 'shin', 'hem']],
+    ['其他', ['tail', 'ribbon', 'accflip', 'accessory', 'fixed', 'custom']],
   ];
   const ADD_TYPES = ['torso', 'head', 'fronthair', 'hair', 'backhair', 'feature', 'eye', 'ear', 'arm', 'leg', 'tail', 'accessory', 'custom', 'group'];
 
