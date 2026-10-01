@@ -660,3 +660,10 @@ body { -webkit-touch-callout: none; }
 /* 簡易模式：快速建模 / 重新建模按鈕 */
 .spanel .sbuild { display: flex; padding: 8px 10px 0; }
 .spanel .sbuild .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+/* v1.0.6：選單裡灰色（父層不符合）的項目、快速建模右上角的取消 */
+.popmenu button.mdis { opacity: .4; cursor: not-allowed; }
+.popmenu button.mdis:hover { background: none; }
+.wizard .wfoot { justify-content: flex-end; }
+.wizard .whead .wcancel, .dialog h2 .wcancel { margin-left: auto; height: 26px; padding: 0 10px; font-size: 12px; font-weight: 400; }
+.dialog h2:has(.wcancel) { display: flex; align-items: center; gap: 8px; }

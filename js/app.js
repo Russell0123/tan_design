@@ -2424,7 +2424,8 @@ function showMenu(x, y, items) {
   for (const it of items) {
     if (it === '-') { m.append(el('div', { class: 'msep' })); continue; }
     if (it.label && !it.run) { m.append(el('div', { class: 'mlabel' }, it.label)); continue; }
-    m.append(el('button', { disabled: it.disabled, onclick: e => { e.stopPropagation(); hideMenu(); it.run(); } }, it.icon ? ico(it.icon) : el('span', { class: 'ico' }), it.label, it.hint ? el('span', { class: 'mkey' }, it.hint) : null));
+    // it.dim：灰色不能選，但滑過去能看到 it.tip（disabled 的按鈕不會顯示提示）
+    m.append(el('button', { disabled: it.disabled, class: it.dim ? 'mdis' : null, title: it.tip || null, onclick: e => { e.stopPropagation(); if (it.dim) return; hideMenu(); it.run(); } }, it.icon ? ico(it.icon) : el('span', { class: 'ico' }), it.label, it.hint ? el('span', { class: 'mkey' }, it.hint) : null));
   }
   m.classList.remove('hidden');
   const r = m.getBoundingClientRect();
@@ -2436,6 +2437,25 @@ function hideMenu() { $('#popmenu').classList.add('hidden'); }
 const FEATURES = new Set(Model.TYPE_MENU.find(c => c[0] === '五官')[1]);
 const isHeadNode = p => !!p && (Model.baseType(p.type) === 'head' || (p.type === 'image' && !!p.role && Model.baseType(p.role) === 'head'));
 const isFeatureNode = n => FEATURES.has(n.type) || (n.type === 'image' && !!n.role && FEATURES.has(n.role));
+// 父層要求：頭部物件（頭以外）、五官 → 父層要是頭；上半身物件（軀幹以外）→ 父層要是軀幹。下半身、其他不限制
+// 頭部 / 上半身可以隔著同一類的物件（例如小臂掛在上臂底下、髮尾掛在頭髮底下）或群組；五官要直接放在頭底下
+const nodeRole = p => !p ? null : p.type === 'image' ? (p.role && TYPES[p.role] ? p.role : null) : p.type;
+const catOf = t => (Model.TYPE_MENU.find(c => c[1] && c[1].includes(t)) || [])[0];
+const PARENT_REQ = { '頭部': ['head', '頭'], '五官': ['head', '頭'], '上半身': ['torso', '軀幹'] };
+const parentReq = t => t === 'head' || t === 'torso' ? null : PARENT_REQ[catOf(t)] || null;
+const parentReqText = t => { const r = parentReq(t); return r ? `${TYPES[t].label}要放在「${r[1]}」底下${catOf(t) === '五官' ? '' : `（父層是${r[1]}，或${r[1]}底下的同類物件）`}` : ''; };
+function parentOk(t, p) {
+  const r = parentReq(t);
+  if (!r) return true;
+  const c = catOf(t);
+  for (let q = p, i = 0; q && i < 64; q = node(q.parent), i++) {
+    const rq = nodeRole(q);
+    if (rq === r[0]) return true;
+    if (c === '五官') return false;
+    if (q.type !== 'group' && !(rq && catOf(rq) === c)) return false;
+  }
+  return false;
+}
 // 名稱不能重複：改名時檢查
 function setNodeName(n, v) {
   v = (v || '').trim();
@@ -2453,10 +2473,13 @@ function typeMenu(x, y, pick, o = {}) {
   for (const [label, list, direct] of Model.TYPE_MENU) {
     if (direct) { items.push({ label: (o.current === direct ? '✓ ' : '') + label, icon: TYPES[direct].icon, run: () => pick(direct) }); continue; }
     const cur = list.includes(o.current) ? `（${TYPES[o.current].label}）` : '';
-    if (label === '五官' && 'parentId' in o && !isHeadNode(node(o.parentId))) { items.push({ label: '五官（要放在頭底下）', disabled: true, run: () => {} }); continue; }
     items.push({ label: `${label} ›${cur}`, run: () => setTimeout(() => showMenu(x, y, [
       { label: '‹ ' + label, run: () => setTimeout(() => typeMenu(x, y, pick, o), 0) }, '-',
-      ...list.map(t => ({ label: (o.current === t ? '✓ ' : '') + TYPES[t].label, icon: TYPES[t].icon, run: () => pick(t) }))]), 0) });
+      ...list.map(t => {
+        // 父層不符合要求 → 灰色，滑過去顯示要求
+        const bad = 'parentId' in o && !parentOk(t, node(o.parentId));
+        return { label: (o.current === t ? '✓ ' : '') + TYPES[t].label, icon: TYPES[t].icon, dim: bad, tip: bad ? parentReqText(t) : '', run: () => pick(t) };
+      })]), 0) });
   }
   if (o.group) items.push('-', { label: TYPES.group.label, icon: TYPES.group.icon, run: () => pick('group') });
   showMenu(x, y, items);
@@ -2508,7 +2531,7 @@ function defaultParent() {
   return img ? img.id : 'root';
 }
 function createPart(t, parent) {
-  if (FEATURES.has(t) && !isHeadNode(node(parent))) { toast('五官要放在「頭」底下：請先選取頭（部位或頭的圖層）再新增', 'warn'); return; }
+  if (!parentOk(t, node(parent))) { toast(parentReqText(t) + '：請先選取正確的父層再新增', 'warn'); return; }
   const n = addPart(D, t, null, parent);
   if (t !== 'group') n.params = typeDefaults(t);
   const same = D.data.nodes.filter(x => x.type === t && x.parent === parent).length;
@@ -2587,7 +2610,7 @@ function bakeDetached(n) {
 // 分層：每個圖層選物件屬性（和「物件屬性」選單同一套類型）→ 依手動調好的範例建立層次：
 //   身體圖層 → 軀幹部位（脊椎鏈，支點在脖子）→ 頭圖層 → 頭部位（支點在下巴、延遲）→ 頭髮 / 五官 / 耳朵圖層
 //   頭髮圖層：沿形狀垂下的鏈；尾巴 / 觸手 / 飾品：每一條分支各一條鏈（從靠近身體的一端開始）
-// 單張圖：在畫面上依序點「胸腔」「下巴」、（可選）每撮頭髮的髮根 → 髮尾
+// 單張圖：在畫面上依序點「軀幹」（胸口中心）「下巴」、（可選）每撮頭髮的髮根 → 髮尾
 const WIZ_EXTRA = [['eyeclosed', '閉眼差分'], ['eyelid', '眼皮（遮擋用）']];
 const wizBase = r => r && TYPES[r] ? Model.baseType(r) : r;
 const WIZ_HEADKIDS = new Set(['feature', 'eye', 'nose', 'mouth', 'brow', 'fronthair', 'hair', 'backhair', 'ear', 'eyeclosed', 'eyelid']);
@@ -2692,15 +2715,16 @@ function wizardLayered(images, opt0 = {}) {
   }
   const body = el('div', { class: 'dbody keys' },
     el('div', { class: 'khead' }, '每個圖層是什麼？（滑過去會在畫面上標出來）'), list, ...wizOptions(opt));
-  const cancel = el('button', { class: 'btn', onclick: () => { close(); if (opt.quick && D) { closeTab(D); showHome(); } } }, '取消');
+  const cancel = el('button', { class: 'btn wcancel', onclick: () => { close(); if (opt.quick && D) { closeTab(D); showHome(); } } }, '取消');
   const build = el('button', { class: 'btn primary', onclick: () => {
     if (![...pick.values()].some(Boolean)) { toast('至少指定一個圖層', 'warn'); return; }
     close(); wizardBuildLayered(pick, opt);
   } }, '建立');
   let close;
-  if (D.ui.simple) close = wizDockOpen('快速建模（多圖層）', body, [cancel, build]);
+  if (D.ui.simple) { close = wizDockOpen('快速建模（多圖層）', body, [build]); $('#wizDock .whead').append(cancel); }
   else {
-    const close0 = openDialog('快速建模（多圖層）', body, [cancel, build], true);
+    const close0 = openDialog('快速建模（多圖層）', body, [build], true);
+    $('#modal .dialog h2').append(cancel);   // 取消在右上角
     close = () => { close0(); wizDim(false); $('#modal').classList.remove('side'); };
     $('#modal').classList.add('side');   // 對話框靠右，畫面上看得到標出的圖層
     wizDim(true);
@@ -2948,7 +2972,7 @@ function wizardFinish(opt, made) {
 }
 
 // ---- 單張圖 ----
-// 步驟：胸腔、下巴（必要）；頭髮、肚臍、獸耳、尾巴（選配）。頭髮 / 獸耳 / 尾巴：點根部再點末端，或按住從根部拖到末端
+// 步驟：軀幹、下巴（必要）；頭髮、肚臍、獸耳、尾巴（選配）。頭髮 / 獸耳 / 尾巴：點根部再點末端，或按住從根部拖到末端
 const WIZ_SEGS = { hair: { key: 'hair', label: '頭髮', color: '110,231,183' }, ear: { key: 'ears', label: '獸耳', color: '244,114,182' }, tail: { key: 'tails', label: '尾巴', color: '167,139,250' } };
 function wizardSingle(img, opt0 = {}) {
   wiz = { img, step: 'torso', torso: null, neck: null, navel: null, hair: [], ears: [], tails: [], pend: null, hist: [], opt: { hair: true, other: true, preset: 'bounce', profile: 'chibi', ...opt0 } };
@@ -2958,7 +2982,7 @@ function wizardSingle(img, opt0 = {}) {
   renderWizard();
 }
 const WIZ_STEP = {
-  torso: '點「胸腔」：上半身的支點（胸口一帶）；以「下巴」切開頭部、「肚臍」切開下半身',
+  torso: '點「軀幹」：點在胸口中心；之後以「下巴」切開頭部、「肚臍」切開下半身',
   neck: '點「下巴 / 脖子」：頭和身體從這條線分開',
   navel: '點「肚臍」：這條線以下用下半身的動法',
   hair: '頭髮：點髮根再點髮尾（或按住從髮根拖到髮尾）',
@@ -2988,7 +3012,7 @@ function wizHit(mx, my) {
 const hairExt = ([r, t]) => { const dx = t[0] - r[0], dy = t[1] - r[1]; return [[r[0] - dx * 0.12, r[1] - dy * 0.12], [t[0] + dx * 0.15, t[1] + dy * 0.15]]; };
 // 頭髮鏈的範圍（核心半徑、羽化）：預覽與建立用同一組
 const wizHairR = () => { const M = Math.max(D.data.width, D.data.height); return { core: Math.round(M * 0.04), feather: Math.round(M * 0.07) }; };
-// 步驟順序：必填（胸腔、下巴）設定完自動跳下一步；其他的有「跳過 / 完成」
+// 步驟順序：必填（軀幹、下巴）設定完自動跳下一步；其他的有「跳過 / 完成」
 const WIZ_ORDER = ['torso', 'neck', 'hair', 'navel', 'ear', 'tail'], WIZ_REQ = new Set(['torso', 'neck']);
 const wizHas = k => WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length > 0 : !!wiz[k];
 // 清掉某一步放的東西（點 / 線），步驟切回那一步
@@ -3026,7 +3050,7 @@ function renderWizard() {
   box.classList.toggle('docked', docked);
   box.innerHTML = '';
   const reqDone = wiz.torso && wiz.neck;
-  const steps = [['torso', '胸腔'], ['neck', '下巴'], ['hair', '頭髮'], ['navel', '肚臍'], ['ear', '獸耳'], ['tail', '尾巴']].map(([k, t]) => {
+  const steps = [['torso', '軀幹'], ['neck', '下巴'], ['hair', '頭髮'], ['navel', '肚臍'], ['ear', '獸耳'], ['tail', '尾巴']].map(([k, t]) => {
     const n = WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length : 0;
     const note = WIZ_REQ.has(k) ? '必填' : n ? `${n} ${k === 'hair' ? '撮' : k === 'tail' ? '條' : '個'}` : k === 'navel' && wiz.navel ? '以下為下半身' : '';
     return el('div', { class: 'wstep' + (wizHas(k) ? ' done' : '') + (wiz.step === k ? ' cur' : ''), onclick: () => { wiz.step = k; wiz.pend = null; renderWizard(); } },
@@ -3035,7 +3059,8 @@ function renderWizard() {
   });
   const head = el('div', { class: 'whead' }, '快速建模（單圖層）', el('span', { class: 'grow' }),
     el('button', { class: 'tb', title: '復原一步（Delete / Backspace / Ctrl+Z）', disabled: wiz.pend || wiz.hist.length ? null : 'disabled', onclick: wizUndo }, '↶'),
-    docked ? null : el('button', { class: 'tb wmin', title: wiz.min ? '展開' : '收起（只留目前步驟）', onclick: () => { wiz.min = !wiz.min; renderWizard(); } }, wiz.min ? '▢' : '─'));
+    docked ? null : el('button', { class: 'tb wmin', title: wiz.min ? '展開' : '收起（只留目前步驟）', onclick: () => { wiz.min = !wiz.min; renderWizard(); } }, wiz.min ? '▢' : '─'),
+    el('button', { class: 'btn wcancel', onclick: cancelWizard }, '取消'));
   const O = wiz.opt, chk = (k, t) => { const i = el('input', { type: 'checkbox', checked: !!O[k] }); i.addEventListener('change', () => { O[k] = i.checked; }); return el('label', { class: 'chk' }, i, t); };
   // 右下：選配步驟 = 跳過 / 完成；必填都完成後 = 建立
   const opt = wiz.step && !WIZ_REQ.has(wiz.step);
@@ -3049,20 +3074,20 @@ function renderWizard() {
     el('div', { class: 'wstepper' }, ...steps),
     el('div', { class: 'wopts' }, chk('hair', '頭髮擺動'), chk('other', '其他東西擺動（獸耳、尾巴、下半身）')),
     field('動作組', (() => { const s = el('select', {}, ...Object.entries(Model.PRESETS).map(([k, p]) => el('option', { value: k, selected: O.preset === k }, p.label))); s.addEventListener('change', () => { O.preset = s.value; }); return s; })()),
-    el('div', { class: 'wfoot' }, el('button', { class: 'btn', onclick: cancelWizard }, '取消'), right));
+    el('div', { class: 'wfoot' }, right));
   if (!docked) makeDraggable(box, head);
 }
 // 分層精靈：簡易模式時放進側邊欄；完整模式是對話框
 function wizDockOpen(title, body, foot) {
   const dock = $('#wizDock');
   dock.innerHTML = '';
-  dock.append(el('div', { class: 'wizard docked' }, el('div', { class: 'whead' }, title), body, el('div', { class: 'wfoot' }, ...foot)));
+  dock.append(el('div', { class: 'wizard docked' }, el('div', { class: 'whead' }, el('span', { class: 'grow' }, title)), body, el('div', { class: 'wfoot' }, ...foot)));
   document.body.classList.add('wizon');
   return () => { dock.innerHTML = ''; document.body.classList.remove('wizon'); };
 }
 function wizardClick(x, y) {
   const p = [Math.round(x), Math.round(y)];
-  // 依序自動進入下一步：胸腔 → 下巴 → 頭髮
+  // 依序自動進入下一步：軀幹 → 下巴 → 頭髮
   if (wiz.step === 'torso') { wiz.torso = p; wiz.hist.push('torso'); wiz.step = wiz.neck ? 'hair' : 'neck'; }
   else if (wiz.step === 'neck') { wiz.neck = p; wiz.hist.push('neck'); wiz.step = 'hair'; }
   else if (wiz.step === 'navel') { if (!wiz.navel) wiz.hist.push('navel'); wiz.navel = p; }   // 選配：設好後按「完成」到下一步
@@ -3091,7 +3116,7 @@ function drawWizard(g, V) {
   };
   for (const { key, color } of Object.values(WIZ_SEGS)) for (const sg of wiz[key]) { const [r, t] = sg, [er, et] = key === 'hair' ? hairExt(sg) : sg; band(S(...er), S(...et), color, 1); dot(r, `rgb(${color})`); dot(t, '#fff'); }
   if (wiz.pend && wiz.mouse && WIZ_SEGS[wiz.step]) band(S(...wiz.pend), S(...wiz.mouse), WIZ_SEGS[wiz.step].color, 0.7);
-  if (wiz.torso) { dot(wiz.torso, '#f472b6'); label(wiz.torso, '胸腔'); }
+  if (wiz.torso) { dot(wiz.torso, '#f472b6'); label(wiz.torso, '軀幹'); }
   if (wiz.pend) dot(wiz.pend, WIZ_SEGS[wiz.step] ? `rgb(${WIZ_SEGS[wiz.step].color})` : '#fff');
 }
 function wizardBuildSingle() {
@@ -3418,7 +3443,7 @@ function renameInTree(n) {
 }
 function moveNode(n, target, zone) {
   if (n === target || Model.descendants(D.data, n.id).has(target.id)) return;
-  if (isFeatureNode(n) && !isHeadNode(zone === 'in' ? target : node(target.parent))) { toast('五官只能放在「頭」底下', 'warn'); return; }
+  { const t = nodeRole(n); if (t && !parentOk(t, zone === 'in' ? target : node(target.parent))) { toast(parentReqText(t), 'warn'); return; } }
   const nodes = D.data.nodes;
   nodes.splice(nodes.indexOf(n), 1);
   if (zone === 'in') { n.parent = target.id; target.collapsed = false; nodes.push(n); }
@@ -3792,7 +3817,7 @@ function slider(label, get, set, o) {
 function field(label, input, tip) { return el('div', { class: 'frow', title: tip || '' }, el('label', {}, label), input); }
 function selectField(label, options, get, set, after, tip) {
   const s = el('select', {});
-  for (const [v, t, dis] of options) s.append(el('option', { value: v, selected: String(get()) === String(v), disabled: dis ? 'disabled' : null }, t));
+  for (const [v, t, dis, why] of options) s.append(el('option', { value: v, selected: String(get()) === String(v), disabled: dis ? 'disabled' : null, title: dis && why ? why : null }, t));
   s.addEventListener('change', () => { set(s.value); commit(); liveChanged(); after && after(); });
   return field(label, s, tip);
 }
@@ -4243,13 +4268,13 @@ function renderInspector() {
   if (n.type === 'root') {
     return;
   }
-  if (isPart(n) && n.type !== 'group') box.append(selectField('類型', Model.ADD_TYPES.filter(t => t !== 'group').map(t => [t, TYPES[t].label, FEATURES.has(t) && !isHeadNode(node(n.parent))]), () => n.type, v => {
+  if (isPart(n) && n.type !== 'group') box.append(selectField('類型', Model.ADD_TYPES.filter(t => t !== 'group').map(t => [t, TYPES[t].label, !parentOk(t, node(n.parent)), parentReqText(t)]), () => n.type, v => {
     n.type = v; n.params = typeDefaults(v); n.p3d = { ...P3D.nodeDefaults(v), off: n.p3d?.off };
   }, () => renderAll(), '換類型會套用該類型的動態與立體預設'));
   else if (n.type !== 'image') box.append(field('類型', el('span', {}, TYPES[n.type].label)));
   for (const w of Model.warnings(D.data, n)) box.append(el('div', { class: 'warnbox' }, ico('warn'), w));
   // 父層（圖層也可以放到其他圖層 / 部位底下，跟著父層一起動）
-  const parentOpts = D.data.nodes.filter(x => !Model.descendants(D.data, n.id).has(x.id)).map(x => [x.id, x.name, isFeatureNode(n) && !isHeadNode(x)]);
+  const parentOpts = D.data.nodes.filter(x => !Model.descendants(D.data, n.id).has(x.id)).map(x => [x.id, x.name, !!nodeRole(n) && !parentOk(nodeRole(n), x), parentReqText(nodeRole(n) || 'image')]);
   box.append(selectField('父層', parentOpts, () => n.parent, v => { n.parent = v; }, () => renderAll()));
   // 依循父層：整體（跟著父層在那裡的變形）或父層的某個錨點（只跟著那一點平移）
   { const par = n.parent && node(n.parent);
