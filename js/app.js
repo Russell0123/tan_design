@@ -595,7 +595,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.8';
+const APP_VERSION = '1.0.10';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
@@ -3061,7 +3061,7 @@ function wizardBuildLayered(pick, opt) {
     }
   }
   // 5. 立體深度 / 頭部定位
-  if (opt.depth) {
+  {   // 深度一律放好（之後開立體就有前後視差）；要不要開立體由選項決定
     for (const hp of headParts.values()) if ((P3D.nodeOf(hp).depth ?? null) === null) P3D.nodeOf(hp).depth = WIZ_DEPTH.head;
     for (const n of imgs) { const P = P3D.nodeOf(n), b = B(n) || R(n); if (b && (P.depth === null || P.depth === undefined)) P.depth = WIZ_DEPTH[b] ?? 0; }
   }
@@ -3079,6 +3079,8 @@ function wizardBuildLayered(pick, opt) {
 }
 function wizardFinish(opt, made) {
   Model.applyPreset(D.data, opt.preset);
+  // 立體的轉動比例：軀幹約 1/3、腿更少，稍微落後
+  for (const n of D.data.nodes) P3D.applyTurn(n);
   // 畫風（Q 版 / 正常比例）的頭部參數蓋在動作組之後
   if (opt.profile) for (const n of D.data.nodes) if (n.type === 'head') Object.assign(n.params, WIZ_PROFILES[opt.profile].head);
   if (opt.rig || opt.depth) P3D.settings(D.data).enabled = true;
@@ -3262,6 +3264,8 @@ function wizardBuildSingle() {
     wiz.ears.forEach((s, i) => { const p = addPart(D, 'ear', `獸耳 ${i + 1}`, head.id, line(s, 3), { delay: i % 2 ? 2 : 0, params: amp({ ...typeDefaults('ear') }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
     wiz.tails.forEach((s, i) => { const p = addPart(D, 'tail', `尾巴 ${i + 1}`, hip ? hip.id : torso.id, line(s, 6), { mirror: i % 2 === 1, delay: WIZ_DELAY.tail + (i % 2 ? 2 : 0), params: amp({ ...typeDefaults('tail'), ...WIZ_PARAMS.tail }) }); p.region.radius = HR.core; p.region.feather = HR.feather; made++; });
   }
+  // 深度起點（依部位類型；之後開立體就有前後視差）
+  for (const n of D.data.nodes) if (isPart(n) && n.type !== 'group' && (P3D.nodeOf(n).depth ?? null) === null) P3D.nodeOf(n).depth = P3D.typeDepth(D.data, n);
   wiz = null; renderWizard(); wizDim(false);
   wizardFinish({ ...opt, rig: false, depth: false }, made);
 }
@@ -4500,7 +4504,7 @@ function renderParams() {
   box.append(
     el('div', { class: 'frow' }, el('label', {}, ''), checkbox('左右鏡像', () => n.mirror, v => { n.mirror = v; })),
     groupToggle('總體', P, MAIN_KEYS, '整個部位以支點（紅）為中心的動作；越靠近支點越柔和。左邊圓點 = 整組開關'),
-    slider('相位', () => n.phase || 0, v => { n.phase = v; }, { mute: [P, 'phase'], min: 0, max: 32, step: 0.25, dec: 2, tip: '單位 1/32 循環（最小 0.25 = 1/128 循環）；整個部位晚多少：自己的動作、跟著父層的移動、底下的子層全部一起晚（16 = 半個循環）' }),
+    slider('相位', () => n.phase || 0, v => { n.phase = v; }, { mute: [P, 'phase'], min: 0, max: 32, step: 0.5, dec: 1, tip: '單位 1/32 循環（可調 0.5）；整個部位晚多少：自己的動作、跟著父層的移動、底下的子層全部一起晚（16 = 半個循環）' }),
     slider('延遲', () => n.delay || 0, v => { n.delay = v; }, { mute: [P, 'delay'], min: -16, max: 16, step: 1, tip: '單位 1/32 循環；只有這個部位自己的動作晚多少（負值 = 提早），跟著父層的移動不變；16 = 半個循環' }),
     freqSlider('頻率', () => P.curve || (P.curve = { ...Model.partCurve(D.data, P) }), `${n.name}：總體動作的曲線`, '旋轉、位移、壓扁拉伸每個循環來回幾次（0.5 為單位）；小扳手調曲線形狀'),
     slider('旋轉角度', () => P.angle, v => { P.angle = v; }, { mute: [P, 'angle'], min: -45, max: 45, step: 0.5, dec: 1, tip: '度' }),

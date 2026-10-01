@@ -541,7 +541,8 @@ const Model = (() => {
 
   function makeDeformer(data, n, t, ctx, depth) {
     const motion = P3D.probe ? null : makeMotion(data, n, t, ctx, depth);
-    const o3 = P3D.offset(data, n, t - delayOf(n) * unitOf(data), ctx.drv(t - delayOf(n) * unitOf(data)));
+    const t3 = t - (delayOf(n) + P3D.lagOf(n)) * unitOf(data);   // 立體轉向：再加上這個部位的落後（軀幹、腿比頭晚一點轉）
+    const o3 = P3D.offset(data, n, t3, ctx.drv(t3));
     const keyed = !P3D.probe && hasKeys(n);
     const kx = keyed ? keyVal(data, n, 'tx', t) : 0, ky = keyed ? keyVal(data, n, 'ty', t) : 0, kf = keyed ? keyVal(data, n, 'flip', t) : 0;
     const ksc = keyed ? keyVal(data, n, 'sc', t) : 1, kr = keyed ? keyVal(data, n, 'rot', t) : 0, ksx = keyed ? keyVal(data, n, 'sx', t) * ksc : 1, ksy = keyed ? keyVal(data, n, 'sy', t) * ksc : 1;

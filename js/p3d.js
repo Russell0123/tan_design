@@ -9,7 +9,12 @@ const P3D = (() => {
   // 頭以外的類型預設深度（只在自動綁定時當起點，之後各自調整）
   const BODY = { head: 0.3, torso: 0, arm: 0.15, leg: -0.3, tail: -0.4 };
   const TYPE_SQUASH = { head: 0.5, torso: 0.3 };
-  const DEFAULT = { enabled: false, yaw: 12, yawFreq: 1, yawPhase: 0, pitch: 0, pitchFreq: 1, pitchPhase: 8, depth: 1 };
+  // 預設參考手動調整的範例（0917）：轉向小一點、加一點俯仰、深度感 0.65
+  const DEFAULT = { enabled: false, yaw: 6.5, yawFreq: 1, yawPhase: 0, pitch: 3.5, pitchFreq: 1, pitchPhase: 8, depth: 0.65 };
+  // 轉動比例：頭轉最多，軀幹約 1/3、腿更少，而且稍微落後（lag：單位 1/32 循環，只影響立體轉向）
+  const TYPE_TURN = { torso: { k: 0.3, lag: 1 }, hip: { k: 0.3, lag: 1 }, leg: { k: 0.15, lag: 2 } };
+  const turnOf = type => TYPE_TURN[type] || TYPE_TURN[Model.baseType(type)] || null;
+  const turnRange = k => ({ yawNeg: -k, yawPos: k, pitchNeg: -k, pitchPos: k });
 
   // 注意：一定要回傳「同一個」data.p3d 物件（就地補預設值）。之前每次都換成新的複本，
   // 介面上的勾選框 / 拉桿改到的是被換掉的舊物件 → 「啟用立體」按了沒反應
@@ -27,9 +32,23 @@ const P3D = (() => {
     return S;
   }
   const has3d = n => n.type !== 'root';
-  const nodeDefaults = type => ({ depth: null, squashX: TYPE_SQUASH[type] ?? 0, squashY: TYPE_SQUASH[type] ?? 0 });
+  // role：圖層的物件屬性（轉動比例跟著它；壓縮仍依節點本身的種類）
+  const nodeDefaults = (type, role) => {
+    const P = { depth: null, squashX: TYPE_SQUASH[type] ?? 0, squashY: TYPE_SQUASH[type] ?? 0 };
+    const T = turnOf(role || type);
+    if (T) { P.range = turnRange(T.k); P.lag = T.lag; }
+    return P;
+  };
+  // 已經有的節點：轉動範圍還沒設過（空的）才套用轉動比例（快速建模用）
+  function applyTurn(n) {
+    const T = turnOf(n.type === 'image' ? n.role : n.type);
+    if (!T || !has3d(n)) return;
+    const P = nodeOf(n);
+    if (!P.range || !Object.keys(P.range).length) P.range = turnRange(T.k);
+    if (P.lag == null) P.lag = T.lag;
+  }
   function nodeOf(n) {
-    if (!n.p3d) n.p3d = nodeDefaults(n.type);
+    if (!n.p3d) n.p3d = nodeDefaults(n.type, n.type === 'image' ? n.role : null);
     return n.p3d;
   }
   const val = (p, k) => (p.off && p.off[k] ? 0 : p[k] || 0);
@@ -178,5 +197,6 @@ const P3D = (() => {
     list.forEach((n, i) => { nodeOf(n).depth = list.length > 1 ? +(-0.6 + 1.2 * i / (list.length - 1)).toFixed(2) : 0; });
   }
 
-  return { faceOfNode, HEAD_REL, BODY, typeDepth, DEFAULT, setProbe, get probe() { return probe; }, faceAncestor, settings, nodeOf, nodeDefaults, driver, depthOf, parentDepth, offset, faceMap, faceNorm, faceFromBounds, has3d, depthByOrder, setMaps, depthMap };
+  const lagOf = n => (n.p3d && n.p3d.lag) || 0;
+  return { applyTurn, lagOf, faceOfNode, HEAD_REL, BODY, typeDepth, DEFAULT, setProbe, get probe() { return probe; }, faceAncestor, settings, nodeOf, nodeDefaults, driver, depthOf, parentDepth, offset, faceMap, faceNorm, faceFromBounds, has3d, depthByOrder, setMaps, depthMap };
 })();
