@@ -548,7 +548,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.0.6';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
@@ -1959,10 +1959,6 @@ function addPinAt(n, x, y) {
   n.pins.push(p);
   D.ui.selPin = p.id;
   commit(); renderRight(); renderStatus();
-  if (n.type === 'image' && !(n.role && TYPES[n.role])) {
-    const r = $('#overlay').getBoundingClientRect(), q = aApply(viewAffine(), x, y);
-    typeMenu(r.left + q[0] + 12, r.top + q[1], v => { if (!v) return; setLayerRole(n, v); commit(); renderAll(); toast(`「${n.name}」設為${TYPES[v].label}：繼續點就是擺動鏈`, 'info'); }, { title: '這個圖層是什麼？（選了就會動）', parentId: n.parent });
-  }
 }
 function deletePin(n, p) {
   n.pins = n.pins.filter(q => q !== p);
@@ -2095,6 +2091,14 @@ function setupPointer() {
         return;
       }
       if (!isPart(n) && n.type !== 'image') { toast('請先在左側選擇一個部位或圖層', 'warn'); return; }
+      // 圖層沒有部位屬性 → 不能編輯錨點；先問是什麼，選了才放這一點
+      if (n.type === 'image' && !(n.role && TYPES[n.role])) {
+        if (!alphaAtDoc(x, y)) { toast('錨點要放在圖片內容上（目前點在透明處）', 'warn'); return; }
+        const r = ov.getBoundingClientRect();
+        toast('一般圖層不能放錨點：先指定物件屬性', 'warn');
+        typeMenu(r.left + mx + 12, r.top + my, v => { if (!v) return; setLayerRole(n, v); addPinAt(n, x, y); renderAll(); toast(`「${n.name}」設為${TYPES[v].label}：繼續點就是擺動鏈`, 'info'); }, { title: '這個圖層是什麼？（選了才能放錨點）', parentId: n.parent });
+        return;
+      }
       const h = hitPin(mx, my, n);
       if (h) { D.ui.selPin = h.p.id; drag = { type: 'pin', n, p: h.p, ox: h.p.x, oy: h.p.y, moved: false }; cap(); return; }
       addPinAt(n, x, y);
@@ -2440,7 +2444,7 @@ function setNodeName(n, v) {
   n.name = v;
   return true;
 }
-// 類型分類選單：頭部 / 五官 / 軀幹 / 身體 / 其他，點分類再展開；o.none = 最上面加「不指定」、o.group = 加「群組」、o.title = 標題
+// 類型分類選單：頭部 / 五官 / 上半身 / 下半身 / 其他，點分類再展開；o.none = 最上面加「不指定」、o.group = 加「群組」、o.title = 標題
 // o.parentId：新部位 / 這個圖層的父層；不是頭時五官整類灰掉
 function typeMenu(x, y, pick, o = {}) {
   const items = [];
@@ -2583,7 +2587,7 @@ function bakeDetached(n) {
 // 分層：每個圖層選物件屬性（和「物件屬性」選單同一套類型）→ 依手動調好的範例建立層次：
 //   身體圖層 → 軀幹部位（脊椎鏈，支點在脖子）→ 頭圖層 → 頭部位（支點在下巴、延遲）→ 頭髮 / 五官 / 耳朵圖層
 //   頭髮圖層：沿形狀垂下的鏈；尾巴 / 觸手 / 飾品：每一條分支各一條鏈（從靠近身體的一端開始）
-// 單張圖：在畫面上依序點「軀幹」「下巴」、（可選）每撮頭髮的髮根 → 髮尾
+// 單張圖：在畫面上依序點「胸腔」「下巴」、（可選）每撮頭髮的髮根 → 髮尾
 const WIZ_EXTRA = [['eyeclosed', '閉眼差分'], ['eyelid', '眼皮（遮擋用）']];
 const wizBase = r => r && TYPES[r] ? Model.baseType(r) : r;
 const WIZ_HEADKIDS = new Set(['feature', 'eye', 'nose', 'mouth', 'brow', 'fronthair', 'hair', 'backhair', 'ear', 'eyeclosed', 'eyelid']);
@@ -2944,7 +2948,7 @@ function wizardFinish(opt, made) {
 }
 
 // ---- 單張圖 ----
-// 步驟：軀幹、下巴（必要）；頭髮、肚臍、獸耳、尾巴（選配）。頭髮 / 獸耳 / 尾巴：點根部再點末端，或按住從根部拖到末端
+// 步驟：胸腔、下巴（必要）；頭髮、肚臍、獸耳、尾巴（選配）。頭髮 / 獸耳 / 尾巴：點根部再點末端，或按住從根部拖到末端
 const WIZ_SEGS = { hair: { key: 'hair', label: '頭髮', color: '110,231,183' }, ear: { key: 'ears', label: '獸耳', color: '244,114,182' }, tail: { key: 'tails', label: '尾巴', color: '167,139,250' } };
 function wizardSingle(img, opt0 = {}) {
   wiz = { img, step: 'torso', torso: null, neck: null, navel: null, hair: [], ears: [], tails: [], pend: null, hist: [], opt: { hair: true, other: true, preset: 'bounce', profile: 'chibi', ...opt0 } };
@@ -2954,7 +2958,7 @@ function wizardSingle(img, opt0 = {}) {
   renderWizard();
 }
 const WIZ_STEP = {
-  torso: '點「軀幹」：身體的固定支點（腰一帶，擺動時不動的地方）',
+  torso: '點「胸腔」：上半身的支點（胸口一帶）；以「下巴」切開頭部、「肚臍」切開下半身',
   neck: '點「下巴 / 脖子」：頭和身體從這條線分開',
   navel: '點「肚臍」：這條線以下用下半身的動法',
   hair: '頭髮：點髮根再點髮尾（或按住從髮根拖到髮尾）',
@@ -2984,7 +2988,7 @@ function wizHit(mx, my) {
 const hairExt = ([r, t]) => { const dx = t[0] - r[0], dy = t[1] - r[1]; return [[r[0] - dx * 0.12, r[1] - dy * 0.12], [t[0] + dx * 0.15, t[1] + dy * 0.15]]; };
 // 頭髮鏈的範圍（核心半徑、羽化）：預覽與建立用同一組
 const wizHairR = () => { const M = Math.max(D.data.width, D.data.height); return { core: Math.round(M * 0.04), feather: Math.round(M * 0.07) }; };
-// 步驟順序：必填（軀幹、下巴）設定完自動跳下一步；其他的有「跳過 / 完成」
+// 步驟順序：必填（胸腔、下巴）設定完自動跳下一步；其他的有「跳過 / 完成」
 const WIZ_ORDER = ['torso', 'neck', 'hair', 'navel', 'ear', 'tail'], WIZ_REQ = new Set(['torso', 'neck']);
 const wizHas = k => WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length > 0 : !!wiz[k];
 // 清掉某一步放的東西（點 / 線），步驟切回那一步
@@ -3022,7 +3026,7 @@ function renderWizard() {
   box.classList.toggle('docked', docked);
   box.innerHTML = '';
   const reqDone = wiz.torso && wiz.neck;
-  const steps = [['torso', '軀幹'], ['neck', '下巴'], ['hair', '頭髮'], ['navel', '肚臍'], ['ear', '獸耳'], ['tail', '尾巴']].map(([k, t]) => {
+  const steps = [['torso', '胸腔'], ['neck', '下巴'], ['hair', '頭髮'], ['navel', '肚臍'], ['ear', '獸耳'], ['tail', '尾巴']].map(([k, t]) => {
     const n = WIZ_SEGS[k] ? wiz[WIZ_SEGS[k].key].length : 0;
     const note = WIZ_REQ.has(k) ? '必填' : n ? `${n} ${k === 'hair' ? '撮' : k === 'tail' ? '條' : '個'}` : k === 'navel' && wiz.navel ? '以下為下半身' : '';
     return el('div', { class: 'wstep' + (wizHas(k) ? ' done' : '') + (wiz.step === k ? ' cur' : ''), onclick: () => { wiz.step = k; wiz.pend = null; renderWizard(); } },
@@ -3058,7 +3062,7 @@ function wizDockOpen(title, body, foot) {
 }
 function wizardClick(x, y) {
   const p = [Math.round(x), Math.round(y)];
-  // 依序自動進入下一步：軀幹 → 下巴 → 頭髮
+  // 依序自動進入下一步：胸腔 → 下巴 → 頭髮
   if (wiz.step === 'torso') { wiz.torso = p; wiz.hist.push('torso'); wiz.step = wiz.neck ? 'hair' : 'neck'; }
   else if (wiz.step === 'neck') { wiz.neck = p; wiz.hist.push('neck'); wiz.step = 'hair'; }
   else if (wiz.step === 'navel') { if (!wiz.navel) wiz.hist.push('navel'); wiz.navel = p; }   // 選配：設好後按「完成」到下一步
@@ -3087,7 +3091,7 @@ function drawWizard(g, V) {
   };
   for (const { key, color } of Object.values(WIZ_SEGS)) for (const sg of wiz[key]) { const [r, t] = sg, [er, et] = key === 'hair' ? hairExt(sg) : sg; band(S(...er), S(...et), color, 1); dot(r, `rgb(${color})`); dot(t, '#fff'); }
   if (wiz.pend && wiz.mouse && WIZ_SEGS[wiz.step]) band(S(...wiz.pend), S(...wiz.mouse), WIZ_SEGS[wiz.step].color, 0.7);
-  if (wiz.torso) { dot(wiz.torso, '#f472b6'); label(wiz.torso, '軀幹'); }
+  if (wiz.torso) { dot(wiz.torso, '#f472b6'); label(wiz.torso, '胸腔'); }
   if (wiz.pend) dot(wiz.pend, WIZ_SEGS[wiz.step] ? `rgb(${WIZ_SEGS[wiz.step].color})` : '#fff');
 }
 function wizardBuildSingle() {
@@ -3097,7 +3101,7 @@ function wizardBuildSingle() {
   const drawBand = (g, y0, y1) => { g.save(); g.beginPath(); g.rect(0, y0, W, y1 - y0); g.clip(); g.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]); g.drawImage(a.canvas, 0, 0); g.restore(); };
   let made = 0;
   const useNavel = navel && navel[1] > neck[1];
-  const torso = addPart(D, 'torso', '身體', img.id, [wiz.torso], { params: { ...typeDefaults('torso') } });
+  const torso = addPart(D, 'torso', '上半身', img.id, [wiz.torso], { params: { ...typeDefaults('torso') } });
   paintMask(D, torso, g => drawBand(g, neck[1], useNavel ? navel[1] : H), false, true); made++;
   const head = addPart(D, 'head', '頭', torso.id, [neck], { delay: 4, params: { ...typeDefaults('head'), ...WIZ_PARAMS.head, ...PF.head } });
   paintMask(D, head, g => drawBand(g, 0, neck[1]), false, true); made++;
@@ -5785,7 +5789,7 @@ const SIMPLE_GROUPS = [
   ['hair', '頭髮', ['hair', 'fronthair', 'backhair', 'bangs', 'hairflip', 'ahoge']],
   ['ear', '耳朵', ['ear']],
   ['face', '五官', ['feature', 'eye', 'nose', 'mouth', 'brow']],
-  ['torso', '軀幹', ['torso']],
+  ['torso', '上半身', ['torso']],
   ['lower', '下半身', ['hip', 'leg', 'thigh', 'shin']],
   ['arm', '手臂', ['arm', 'upperarm', 'forearm', 'hand']],
   ['tail', '尾巴', ['tail']],

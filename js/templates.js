@@ -1,4 +1,4 @@
-// 公版骨架（Q版）：以「頭部橢圓」為基準，套上 軀幹（固定錨）→ 頭 → 側髮 / 後髮 / 呆毛（/ 獸耳）
+// 公版骨架（Q版）：以「頭部橢圓」為基準，套上 軀幹 → 頭 → 側髮 / 後髮 / 呆毛（/ 獸耳）
 const Templates = (() => {
   const OPTS = { sideHair: true, backHair: true, ahoge: true, ears: false };
   const OPT_LABELS = { sideHair: '左右側髮', backHair: '左右後髮', ahoge: '呆毛', ears: '獸耳' };

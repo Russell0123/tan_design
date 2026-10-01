@@ -147,7 +147,7 @@ const Model = (() => {
     root:      { label: '整體', icon: 'root' },
     image:     { label: '圖層', icon: 'image', color: '#9aa4b5', defaults: STILL },
     group:     { label: '群組', icon: 'folder', color: '#9aa4b5', defaults: STILL, region: 'none' },
-    torso:     { label: '軀幹（固定錨）', icon: 'lock', color: '#f87171', defaults: STILL },
+    torso:     { label: '軀幹', icon: 'lock', color: '#f87171', defaults: STILL },
     head:      { label: '頭', icon: 'rotate', color: '#60a5fa', defaults: { ...STILL, angle: 3 } },
     hair:      { label: '頭髮', icon: 'wave', color: '#ffb347', defaults: HAIR_TUNED },
     fronthair: { label: '前髮', icon: 'wave', color: '#fde68a', defaults: HAIR_TUNED },
@@ -181,8 +181,8 @@ const Model = (() => {
   const TYPE_MENU = [
     ['頭部', ['head', 'fronthair', 'bangs', 'hair', 'backhair', 'hairflip', 'ahoge', 'ear']],
     ['五官', ['feature', 'eye', 'nose', 'mouth', 'brow']],
-    ['軀幹（固定錨）', null, 'torso'],
-    ['身體', ['arm', 'upperarm', 'forearm', 'hand', 'hip', 'leg', 'thigh', 'shin']],
+    ['上半身', ['torso', 'arm', 'upperarm', 'forearm', 'hand']],
+    ['下半身', ['hip', 'leg', 'thigh', 'shin']],
     ['其他', ['tail', 'accflip', 'accessory', 'fixed', 'custom']],
   ];
   const ADD_TYPES = ['torso', 'head', 'fronthair', 'hair', 'backhair', 'feature', 'eye', 'ear', 'arm', 'leg', 'tail', 'accessory', 'custom', 'group'];
