@@ -8,6 +8,47 @@ const Renderer = (() => {
   const FS_TEX = `
     precision mediump float; uniform sampler2D uTex; uniform float uAlpha; varying vec2 vUV; varying float vW;
     void main() { gl_FragColor = texture2D(uTex, vUV) * uAlpha; }`;
+  // 剪裁遮色片：只畫在遮罩畫面（底層圖層變形後的樣子）有 alpha 的地方（Live2D 的做法：遮罩先畫到暫存畫面）
+  const FS_CLIP = `
+    precision mediump float; uniform sampler2D uTex; uniform sampler2D uMask; uniform vec2 uSize; uniform float uAlpha; varying vec2 vUV; varying float vW;
+    void main() { gl_FragColor = texture2D(uTex, vUV) * uAlpha * texture2D(uMask, gl_FragCoord.xy / uSize).a; }`;
+  // 進階混合模式：先把目前畫好的內容複製成「底圖」，再用公式算（W3C / Photoshop 的合成公式，預乘 alpha）
+  const BLEND_ID = { multiply: 1, screen: 2, add: 3, overlay: 4, softlight: 5, hardlight: 6, colordodge: 7, colorburn: 8, darken: 9, lighten: 10, difference: 11, exclusion: 12, linearburn: 13, linearlight: 14, subtract: 15, divide: 16, vividlight: 17 };
+  const FS_ADV = `
+    precision highp float;
+    uniform sampler2D uTex; uniform sampler2D uBack; uniform sampler2D uMask; uniform vec2 uSize; uniform float uAlpha; uniform int uMode; uniform float uUseMask;
+    varying vec2 vUV; varying float vW;
+    float ch(float b, float s) {
+      if (uMode == 1) return b * s;
+      if (uMode == 2) return b + s - b * s;
+      if (uMode == 3) return min(1.0, b + s);
+      if (uMode == 4) return b <= 0.5 ? 2.0 * b * s : 1.0 - 2.0 * (1.0 - b) * (1.0 - s);
+      if (uMode == 5) { float d = b <= 0.25 ? ((16.0 * b - 12.0) * b + 4.0) * b : sqrt(b); return s <= 0.5 ? b - (1.0 - 2.0 * s) * b * (1.0 - b) : b + (2.0 * s - 1.0) * (d - b); }
+      if (uMode == 6) return s <= 0.5 ? 2.0 * b * s : 1.0 - 2.0 * (1.0 - b) * (1.0 - s);
+      if (uMode == 7) return b <= 0.0 ? 0.0 : s >= 1.0 ? 1.0 : min(1.0, b / (1.0 - s));
+      if (uMode == 8) return b >= 1.0 ? 1.0 : s <= 0.0 ? 0.0 : 1.0 - min(1.0, (1.0 - b) / s);
+      if (uMode == 9) return min(b, s);
+      if (uMode == 10) return max(b, s);
+      if (uMode == 11) return abs(b - s);
+      if (uMode == 12) return b + s - 2.0 * b * s;
+      if (uMode == 13) return max(0.0, b + s - 1.0);
+      if (uMode == 14) return clamp(b + 2.0 * s - 1.0, 0.0, 1.0);
+      if (uMode == 15) return max(0.0, b - s);
+      if (uMode == 16) return s <= 0.0 ? 1.0 : min(1.0, b / s);
+      if (uMode == 17) return s <= 0.5 ? (s <= 0.0 ? 0.0 : max(0.0, 1.0 - (1.0 - b) / (2.0 * s))) : (s >= 1.0 ? 1.0 : min(1.0, b / (2.0 * (1.0 - s))));
+      return s;
+    }
+    void main() {
+      vec2 sc = gl_FragCoord.xy / uSize;
+      vec4 src = texture2D(uTex, vUV) * uAlpha;
+      if (uUseMask > 0.5) src *= texture2D(uMask, sc).a;
+      vec4 dst = texture2D(uBack, sc);
+      float as = src.a, ab = dst.a;
+      vec3 cs = as > 0.0 ? src.rgb / as : vec3(0.0), cb = ab > 0.0 ? dst.rgb / ab : vec3(0.0);
+      vec3 bl = vec3(ch(cb.r, cs.r), ch(cb.g, cs.g), ch(cb.b, cs.b));
+      vec3 co = (1.0 - ab) * cs * as + (1.0 - as) * cb * ab + as * ab * bl;
+      gl_FragColor = vec4(co, as + ab - as * ab);
+    }`;
   const FS_W = `
     precision mediump float; uniform sampler2D uTex; uniform vec3 uColor; uniform float uAlpha; varying vec2 vUV; varying float vW;
     void main() { float a = texture2D(uTex, vUV).a * vW * uAlpha; gl_FragColor = vec4(uColor * a, a); }`;
@@ -49,7 +90,18 @@ const Renderer = (() => {
         uM: gl.getUniformLocation(p, 'uM'), uAlpha: gl.getUniformLocation(p, 'uAlpha'), uColor: gl.getUniformLocation(p, 'uColor'),
       };
     };
-    const P_TEX = program(FS_TEX), P_W = program(FS_W);
+    const P_TEX = program(FS_TEX), P_W = program(FS_W), P_CLIP = program(FS_CLIP);
+    P_CLIP.uMask = gl.getUniformLocation(P_CLIP.p, 'uMask'); P_CLIP.uSize = gl.getUniformLocation(P_CLIP.p, 'uSize'); P_CLIP.uTex = gl.getUniformLocation(P_CLIP.p, 'uTex');
+    let curFB = null, maskFb = null, maskTex = null, maskW = 0, maskH = 0, backTex = null, backW = 0, backH = 0;
+    const P_ADV = program(FS_ADV);
+    for (const k of ['uBack', 'uMask', 'uSize', 'uMode', 'uUseMask', 'uTex']) P_ADV[k] = gl.getUniformLocation(P_ADV.p, k);
+    // 混合模式（預乘 alpha）：正常、色彩增值、濾色、加亮（線性加亮）
+    function setBlend(mode) {
+      if (mode === 'multiply') gl.blendFuncSeparate(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      else if (mode === 'screen') gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      else if (mode === 'add') gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    }
     // 外框用：全畫面四邊形、暫存畫面（framebuffer + texture）
     const P_OL = (() => {
       const p = gl.createProgram();
@@ -116,6 +168,7 @@ const Renderer = (() => {
       },
       begin(w, h) {
         if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+        curFB = null; gl.bindFramebuffer(gl.FRAMEBUFFER, null); setBlend('normal');
         gl.viewport(0, 0, w, h);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -133,14 +186,34 @@ const Renderer = (() => {
           gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
           fboW = w; fboH = h;
         }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); curFB = fbo;
         gl.viewport(0, 0, w, h);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
       },
+      // 剪裁用的遮罩：把底層圖層（目前變形的樣子）畫到遮罩畫面
+      drawMask(d, positions, m, cw, ch, slot = 0, alpha = 1) {
+        const w = canvas.width, h = canvas.height;
+        if (!maskFb) { maskFb = gl.createFramebuffer(); maskTex = gl.createTexture(); }
+        if (maskW !== w || maskH !== h) {
+          gl.bindTexture(gl.TEXTURE_2D, maskTex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, maskFb);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, maskTex, 0);
+          maskW = w; maskH = h;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, maskFb);
+        gl.viewport(0, 0, w, h);
+        gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+        setBlend('normal');
+        if (d.count) { bind(P_TEX, d, positions, m, cw, ch, alpha); gl.bindTexture(gl.TEXTURE_2D, d.tex[Math.min(slot, d.tex.length - 1)]); gl.drawElements(gl.TRIANGLES, d.count, gl.UNSIGNED_SHORT, 0); }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, curFB);
+      },
       // 把暫存畫面加上外框畫回畫布：color = [r, g, b]（0 … 1），radius = 畫布像素
       endLayer(color, radius) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null); curFB = null; setBlend('normal');
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.useProgram(P_OL.p);
         gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -154,11 +227,43 @@ const Renderer = (() => {
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       },
       // m：文件座標 → 畫布座標（cw/ch 為畫布座標的寬高）
-      draw(d, positions, m, cw, ch, slot = 0, alpha = 1) {
+      // o.blend：混合模式；o.clip：只畫在 drawMask 畫的遮罩裡面
+      draw(d, positions, m, cw, ch, slot = 0, alpha = 1, o = null) {
         if (!d.count) return;
-        bind(P_TEX, d, positions, m, cw, ch, alpha);
+        const mode = o && o.blend && BLEND_ID[o.blend];
+        if (mode) {
+          // 底圖 = 目前畫面（或外框用的暫存畫面）的複本
+          const w = canvas.width, h = canvas.height;
+          if (!backTex) backTex = gl.createTexture();
+          gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, backTex);
+          if (backW !== w || backH !== h) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            backW = w; backH = h;
+          }
+          gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, w, h, 0);
+          bind(P_ADV, d, positions, m, cw, ch, alpha);
+          gl.uniform1i(P_ADV.uBack, 2);
+          gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, o.clip && maskTex ? maskTex : backTex); gl.uniform1i(P_ADV.uMask, 1);
+          gl.uniform1f(P_ADV.uUseMask, o.clip && maskTex ? 1 : 0);
+          gl.uniform2f(P_ADV.uSize, w, h); gl.uniform1i(P_ADV.uMode, mode);
+          gl.activeTexture(gl.TEXTURE0); gl.uniform1i(P_ADV.uTex, 0);
+          gl.bindTexture(gl.TEXTURE_2D, d.tex[Math.min(slot, d.tex.length - 1)]);
+          gl.disable(gl.BLEND);   // 公式已經包含和底圖的合成
+          gl.drawElements(gl.TRIANGLES, d.count, gl.UNSIGNED_SHORT, 0);
+          gl.enable(gl.BLEND);
+          return;
+        }
+        const clip = o && o.clip && maskTex;
+        bind(clip ? P_CLIP : P_TEX, d, positions, m, cw, ch, alpha);
+        if (clip) {
+          gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, maskTex); gl.uniform1i(P_CLIP.uMask, 1);
+          gl.activeTexture(gl.TEXTURE0); gl.uniform1i(P_CLIP.uTex, 0); gl.uniform2f(P_CLIP.uSize, canvas.width, canvas.height);
+        }
+        setBlend(o && o.blend);
         gl.bindTexture(gl.TEXTURE_2D, d.tex[Math.min(slot, d.tex.length - 1)]);
         gl.drawElements(gl.TRIANGLES, d.count, gl.UNSIGNED_SHORT, 0);
+        setBlend('normal');
       },
       drawWeights(d, positions, weights, m, cw, ch, color, alpha = 0.55) {
         if (!d.count) return;

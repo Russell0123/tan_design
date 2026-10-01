@@ -55,6 +55,7 @@ button, select, input { font: inherit; color: inherit; }
 .vsplit { cursor: col-resize; background: var(--line-dark); }
 .vsplit:hover, .hsplit:hover, .vsplit.drag, .hsplit.drag { background: var(--blue); }
 .hsplit { height: 4px; cursor: row-resize; background: var(--line-dark); flex: none; }
+.hsplit, .vsplit { position: relative; }
 .phint { color: var(--muted); font-size: 11px; }
 .orderlist { height: var(--orderH); overflow-y: auto; padding: 2px 0; flex: none; }
 .orow { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 6px; cursor: grab; border-bottom: 1px solid var(--line-dark); }
@@ -613,3 +614,17 @@ body.simplemode .layout > .vsplit[data-var="--rw"] { display: block !important; 
   .rotatehint b { font-size: 18px; }
   .rotatehint span { color: var(--muted); }
 }
+.orow.clipped { padding-left: 22px; } .orow.clipped .othumb { border-left: 3px solid #e9557c; }
+/* 手機：網頁本身不能兩指縮放（只有預覽畫面可以）；分隔線加大可以用手指拖 */
+html, body { touch-action: pan-x pan-y; }
+#overlay { touch-action: none; }
+.vsplit::before, .hsplit::before { content: ''; position: absolute; }
+.vsplit::before { top: 0; bottom: 0; left: -6px; right: -6px; }
+.hsplit::before { left: 0; right: 0; top: -6px; bottom: -6px; }
+.vsplit, .hsplit { touch-action: none; }
+@media (pointer: coarse) {
+  .vsplit::before { left: -12px; right: -12px; }
+  .hsplit::before { top: -12px; bottom: -12px; }
+}
+/* 載入時先看到主頁（開檔完成才收起來） */
+body.onhome > :not(#home):not(#modal):not(#popmenu):not(#toasts):not(script) { visibility: hidden; }

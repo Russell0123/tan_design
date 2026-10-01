@@ -548,9 +548,9 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
-function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); }
+function openDoc(doc) { if (isNarrow()) doc.ui.simple = true; tabs.push(doc); switchTab(doc); hideHome(); }
 function switchTab(doc) {
   if (D) { D.ui.playing = false; }
   D = doc;
@@ -559,6 +559,7 @@ function switchTab(doc) {
   applyModeClass();
   placeLayerPanel();
   renderTabs(); renderAll(); updateUndo();
+  resize();
 }
 function closeTab(doc) {
   const i = tabs.indexOf(doc);
@@ -567,6 +568,7 @@ function closeTab(doc) {
   tabs.splice(i, 1);
   if (D === doc) { D = null; switchTab(tabs[Math.min(i, tabs.length - 1)] || null); }
   else renderTabs();
+  if (!tabs.length) showHome();
 }
 function renderTabs() {
   const bar = $('#tabbar');
@@ -626,6 +628,25 @@ const baseName = f => f.name.replace(/\.[^.]+$/, '');
 const isPSD = f => /\.psd$/i.test(f.name);
 
 // 把 PSD 的圖層樹放進文件（items：由下往上）
+// 匯入 PSD 時，不支援的混合模式要怎麼處理：{ mode: 'keep' | 'skip' }（keep = 用正常模式導入）
+let psdSkip = null;
+function psdUnsupported(items, out = []) {
+  for (const it of items) {
+    if (it.type === 'group') psdUnsupported(it.children, out);
+    else if (it.blend && !PSD_BLEND[it.blend]) out.push(`${it.name}（${PSD_BLEND_NAME[it.blend] || it.blend}）`);
+  }
+  return out;
+}
+function askPSD(list) {
+  return new Promise(res => {
+    const body = el('div', { class: 'dbody' },
+      el('div', { class: 'note' }, '這個 PSD 有些圖層用了目前不支援的混合模式（色相、飽和度、顏色、明度、小光源、實色疊印、溶解等）；其他混合模式與剪裁遮色片都支援：'),
+      el('div', { class: 'hint', style: 'max-height:160px;overflow:auto' }, list.join('、')));
+    const close = openDialog('匯入 PSD', body, [
+      el('button', { class: 'btn', onclick: () => { close(); res('skip'); } }, '忽略這些圖層'),
+      el('button', { class: 'btn primary', onclick: () => { close(); res('keep'); } }, '照原樣導入（用正常模式）')]);
+  });
+}
 function addPSDTree(doc, items, parentId, lg, nested) {
   const level = [];
   for (const it of items) {
@@ -636,9 +657,14 @@ function addPSDTree(doc, items, parentId, lg, nested) {
       level.push(...addPSDTree(doc, it.children, parentId, g.id, true));
       continue;
     } else {
+      if (it.blend && !PSD_BLEND[it.blend] && psdSkip && psdSkip.mode === 'skip') continue;
       const aid = addAsset(doc, it.name, it.canvas, true);
       if (!aid) continue;
       const n = Model.makeNode(doc.data, 'image', parentId, { name: it.name, visible: !it.hidden, order: nextOrder(doc), image: { assetId: aid, x: it.left, y: it.top, scale: 1, rot: 0, crop: null, variants: [] } });
+      const bm = PSD_BLEND[it.blend];
+      if (bm && bm !== 'normal') n.blend = bm;
+      if (it.clip) n.clip = true;
+
       if (lg) n.lg = lg;
       doc.data.nodes.push(n);
       level.push(n);
@@ -733,7 +759,11 @@ async function openFiles(files) {
         const psd = await PSD.parse(await f.arrayBuffer());
         doc.data.width = psd.width; doc.data.height = psd.height;
         doc.psdFlatten = psd.flatten;   // 單圖層快速建立時用：繪圖軟體存的合併影像（沒有就自己疊）
+        // 不支援的混合模式：問要照原樣導入還是忽略（單圖層快速建立會整張壓平，不用問）
+        const bad = newFlow === 'single' ? [] : psdUnsupported(psd.children);
+        psdSkip = bad.length ? { mode: await askPSD(bad) } : null;
         addPSDTree(doc, psd.children, 'root');
+        psdSkip = null;
         if (!doc.data.nodes.some(n => n.type === 'image')) throw new Error('沒有可用的像素圖層');
       } else {
         if (!/^image\//.test(f.type)) throw new Error('不是圖片檔');
@@ -996,7 +1026,18 @@ function drawScene(t, animate, M, cw, ch, overlaySel) {
   // 整體外框：沿著角色實際的邊緣（合成後的 alpha），不是遮罩
   const OL = D.data.outline, useOL = !!(OL && OL.on && OL.width > 0);
   if (useOL) renderer.beginLayer();
-  for (const it of list) if (it.a > 0.002) renderer.draw(it.dr.gl, it.pos, M, cw, ch, it.slot, it.a);
+  const clipBase = clipBases(), itemOf = new Map();
+  for (const it of list) if (!itemOf.has(it.dr.id)) itemOf.set(it.dr.id, it);
+  for (const it of list) {
+    if (it.a <= 0.002) continue;
+    const o = node(it.dr.id), blend = o && o.type === 'image' ? o.blend : null;
+    if (o && o.type === 'image' && o.clip) {
+      const bi = itemOf.get(clipBase.get(o.id));
+      if (!bi) continue;
+      renderer.drawMask(bi.dr.gl, bi.pos, M, cw, ch, bi.slot, 1);
+      renderer.draw(it.dr.gl, it.pos, M, cw, ch, it.slot, it.a, { blend, clip: true });
+    } else renderer.draw(it.dr.gl, it.pos, M, cw, ch, it.slot, it.a, blend ? { blend } : null);
+  }
   if (useOL) renderer.endLayer(rgbOf(OL.color || '#ffffff'), OL.width * Math.hypot(M[0], M[1]) * renderer.canvas.width / cw);
   // 範圍預覽（依頂點權重著色）
   if (overlaySel) {
@@ -1081,6 +1122,17 @@ function followHost(dr, host, hp) {
   }
   return out;
 }
+// 剪裁遮色片的底層：前後順序上，下面最近的一個沒有剪裁的圖層（和 Photoshop 一樣）
+function clipBases() {
+  const m = new Map(), list = D.data.nodes.filter(n => n.type === 'image').sort((a, b) => a.order - b.order);
+  let base = null;
+  for (const n of list) { if (n.clip) { if (base) m.set(n.id, base.id); } else base = n; }
+  return m;
+}
+const BLEND_MODES = { normal: '正常', darken: '變暗', multiply: '色彩增值', colorburn: '加深顏色', linearburn: '線性加深', lighten: '變亮', screen: '濾色', colordodge: '加亮顏色', add: '線性加亮（增加）', overlay: '覆蓋', softlight: '柔光', hardlight: '實光', vividlight: '強烈光源', linearlight: '線性光源', difference: '差異化', exclusion: '排除', subtract: '減去', divide: '分割' };
+// PSD 的混合模式 → 這裡支援的；不支援的回傳 null
+const PSD_BLEND = { norm: 'normal', pass: 'normal', 'mul ': 'multiply', scrn: 'screen', lddg: 'add', dark: 'darken', lite: 'lighten', idiv: 'colorburn', lbrn: 'linearburn', 'div ': 'colordodge', over: 'overlay', sLit: 'softlight', hLit: 'hardlight', vLit: 'vividlight', lLit: 'linearlight', diff: 'difference', smud: 'exclusion', fsub: 'subtract', fdiv: 'divide' };
+const PSD_BLEND_NAME = { over: '覆蓋', sLit: '柔光', hLit: '實光', vLit: '強烈光源', lLit: '線性光源', pLit: '小光源', hMix: '實色疊印混合', 'div ': '加亮顏色', idiv: '加深顏色', lbrn: '線性加深', dark: '變暗', lite: '變亮', dkCl: '顏色變暗', lgCl: '顏色變亮', diff: '差異化', smud: '排除', fsub: '減去', fdiv: '分割', 'hue ': '色相', 'sat ': '飽和度', colr: '顏色', 'lum ': '明度', diss: '溶解' };
 let lastDraw = null;
 // 時間軸開啟時：選取物件的位置把手（拖曳 = 在目前時間建立 / 更新位置關鍵影格，整個部位一起移動）
 const tlPivotCache = new Map();
@@ -1940,6 +1992,7 @@ function setupPointer() {
       for (const h of simplePins) { const d = Math.hypot(h.x - mx, h.y - my); if (d < bd) { bd = d; best = h; } }
       if (best) { holdPlay(); drag = { type: 'spin', p: best.p, lx: x, ly: y, moved: false }; cap(); return; }
     }
+    if (D.ui.simple && !wiz && e.pointerType === 'touch') { drag = { type: 'pan', sx: mx, sy: my, px: D.ui.panX, py: D.ui.panY }; ov.setPointerCapture(e.pointerId); return; }
     if (D.ui.simple && !wiz && !(e.button === 1 || (e.button === 0 && spaceDown))) return;
     if (e.button === 1 || (e.button === 0 && spaceDown)) {
       drag = { type: 'pan', sx: mx, sy: my, px: D.ui.panX, py: D.ui.panY };
@@ -2192,6 +2245,33 @@ function setupPointer() {
   ov.addEventListener('pointerup', end);
   ov.addEventListener('pointercancel', end);
   ov.addEventListener('pointerleave', () => { cursor = null; });
+  // 兩指縮放 / 平移（只在預覽畫面；網頁本身不會被縮放）
+  const touches = new Map();
+  let pinch = null;
+  ov.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch' || !D) return;
+    touches.set(e.pointerId, pos(e));
+    if (touches.size === 2) {
+      const [a, b] = [...touches.values()], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      pinch = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: D.ui.zoom, doc: toDoc(mid[0], mid[1]) };
+      drag = null; stroke = null; lasso = null;
+      e.stopImmediatePropagation();
+    }
+  }, true);
+  ov.addEventListener('pointermove', e => {
+    if (!touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, pos(e));
+    if (!pinch || touches.size < 2) return;
+    e.stopImmediatePropagation();
+    const [a, b] = [...touches.values()], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], u = D.ui;
+    u.zoom = Math.max(0.2, Math.min(10, pinch.z0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d0));
+    const sc = u.base * u.zoom;
+    u.panX = mid[0] - pinch.doc[0] * sc - (view.cw / 2 - D.data.width * sc / 2);
+    u.panY = mid[1] - pinch.doc[1] * sc - (view.ch / 2 - D.data.height * sc / 2);
+  }, true);
+  const untouch = e => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; };
+  ov.addEventListener('pointerup', untouch, true);
+  ov.addEventListener('pointercancel', untouch, true);
   ov.addEventListener('wheel', e => {
     if (!D) return;
     e.preventDefault();
@@ -3422,17 +3502,17 @@ function renderOrder() {
     const kind = n.role && TYPES[n.role] ? TYPES[n.role].label : '一般圖層';
     const op = Math.round((n.opacity ?? 1) * 100);
     const row = el('div', {
-      class: 'orow' + (n.id === D.ui.sel && !D.ui.selLg ? ' sel' : '') + (multi.has(n.id) ? ' multi' : '') + (g ? ' gmember' : '') + (Model.isShown(D.data, n) ? '' : ' off'), draggable: 'true',
+      class: 'orow' + (n.id === D.ui.sel && !D.ui.selLg ? ' sel' : '') + (multi.has(n.id) ? ' multi' : '') + (g ? ' gmember' : '') + (n.clip ? ' clipped' : '') + (Model.isShown(D.data, n) ? '' : ' off'), draggable: 'true',
       onclick: e => {
         if (e.ctrlKey || e.metaKey || e.shiftKey) { if (!multi.size && D.ui.sel && D.ui.sel !== n.id && node(D.ui.sel) && Model.isDrawable(node(D.ui.sel))) multi.add(D.ui.sel); multi.has(n.id) ? multi.delete(n.id) : multi.add(n.id); renderOrder(); return; }
         multi.clear(); selectNode(n.id);
       },
-      oncontextmenu: e => { e.preventDefault(); selectNode(n.id); showMenu(e.clientX, e.clientY, [...(n.lg ? [{ label: '移出群組', run: () => { const s = layerStack(); delete n.lg; const i = s.indexOf(n); s.splice(i, 1); const gi = s.findIndex(x => x.lg === (g && g.id)); s.splice(gi < 0 ? i : gi, 0, n); applyStack(s); commit(); renderAll(); } }, '-'] : []), ...nodeMenu(n)]); },
+      oncontextmenu: e => { e.preventDefault(); selectNode(n.id); showMenu(e.clientX, e.clientY, [{ label: (n.clip ? '✓ ' : '') + '剪裁遮色片', run: () => { if (n.clip) delete n.clip; else n.clip = true; commit(); renderAll(); } }, '-', ...(n.lg ? [{ label: '移出群組', run: () => { const s = layerStack(); delete n.lg; const i = s.indexOf(n); s.splice(i, 1); const gi = s.findIndex(x => x.lg === (g && g.id)); s.splice(gi < 0 ? i : gi, 0, n); applyStack(s); commit(); renderAll(); } }, '-'] : []), ...nodeMenu(n)]); },
     },
       toggleBtn('eye', () => n.visible !== false, v => { n.visible = v; }, ['eye', 'eyeOff'], '顯示 / 隱藏'),
       layerThumb(n),
       el('div', { class: 'otext' },
-        el('span', { class: 'ometa' }, `${op < 100 ? op + '% · ' : ''}深度 ${depth.toFixed(2)} · ${kind}`),
+        el('span', { class: 'ometa' }, `${n.clip ? '↳ 剪裁 · ' : ''}${n.blend && BLEND_MODES[n.blend] ? BLEND_MODES[n.blend] + ' · ' : ''}${op < 100 ? op + '% · ' : ''}深度 ${depth.toFixed(2)} · ${kind}`),
         el('span', { class: 'tname' }, n.name)));
     row.addEventListener('dragstart', e => { dragOrder = { n }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', n.id); });
     row.addEventListener('dragend', endDrag);
@@ -4119,6 +4199,8 @@ function renderInspector() {
     const a = D.data.assets[n.image.assetId];
     box.append(
       field('尺寸', el('span', {}, a ? `${a.w} × ${a.h}` : '—')),
+      selectField('混合模式', Object.entries(BLEND_MODES), () => n.blend || 'normal', v => { if (v === 'normal') delete n.blend; else n.blend = v; }, () => renderOrder(), '和底下圖層的混合方式'),
+      el('div', { class: 'frow' }, el('label', {}, ''), checkbox('剪裁遮色片（只顯示在下面那個圖層的範圍內）', () => !!n.clip, v => { if (v) n.clip = true; else delete n.clip; }, () => renderOrder())),
       el('div', { class: 'btnrow' },
         el('button', { class: 'btn', onclick: () => startReplace(n) }, '取代圖片'),
         el('button', { class: 'btn', onclick: () => exportLayerPNG(n) }, '匯出 PNG')),
@@ -5539,7 +5621,7 @@ async function showHome() {
   newFlow = null;
   document.body.classList.add('onhome');
   let h = $('#home');
-  if (!h) { h = el('div', { id: 'home', class: 'home' }); document.body.append(h); }
+  if (!h) { h = el('div', { id: 'home', class: 'home' }); document.body.prepend(h); }
   h.classList.remove('hidden');
   const recents = await Recent.list();
   h.innerHTML = '';
@@ -5549,7 +5631,6 @@ async function showHome() {
   for (const r of recents) {
     const url = URL.createObjectURL(r.blob);
     grid.append(el('div', { class: 'htile', title: '開啟', onclick: async () => {
-      hideHome();
       await openProject(new File([r.blob], r.name + '_tan.png'));
       if (D) { D.recentId = r.id; rememberRecent(D, r.blob); }
     } },
@@ -5559,7 +5640,7 @@ async function showHome() {
   }
   // 範例：接在近期存取後面
   const SAMPLE_THUMB = { girl: 'assets/sample-girl.png', whitePsd: 'assets/sample-white.png', blink: typeof SAMPLE_BLINK_PROJECT === 'string' ? 'data:image/png;base64,' + SAMPLE_BLINK_PROJECT : '' };
-  for (const [k, sm] of Object.entries(Demo.samples)) grid.append(el('div', { class: 'htile', title: '開啟範例', onclick: () => { hideHome(); openSample(k); } },
+  for (const [k, sm] of Object.entries(Demo.samples)) grid.append(el('div', { class: 'htile', title: '開啟範例', onclick: () => openSample(k) },
     el('div', { class: 'hthumb' }, SAMPLE_THUMB[k] ? el('img', { src: SAMPLE_THUMB[k], alt: '' }) : null),
     el('span', { class: 'htag' }, '範例'),
     el('div', { class: 'hname' }, sm.label), el('div', { class: 'hdate' }, '範例')));

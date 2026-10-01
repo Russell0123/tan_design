@@ -196,7 +196,7 @@ const PSD = (() => {
         g.name = r.name; g.hidden = r.hidden;
       } else {
         const canvas = toCanvas(r);
-        if (canvas) stack[stack.length - 1].children.push({ type: 'layer', name: r.name, left: r.left, top: r.top, canvas, hidden: r.hidden });
+        if (canvas) stack[stack.length - 1].children.push({ type: 'layer', name: r.name, left: r.left, top: r.top, canvas, hidden: r.hidden, blend: r.blend, clip: r.clip });
       }
     }
     return { width: W, height: H, children: root.children, composite, flatten };
