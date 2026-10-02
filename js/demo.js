@@ -110,7 +110,7 @@ const Demo = (() => {
     arm('左手', [[300, 530], [250, 588], [203, 640]], false);
     arm('右手', [[500, 530], [550, 588], [597, 640]], true);
     // 尾巴：遮罩切成獨立圖層，放在身體後方
-    const tail = api.addPart('tail', '尾巴', torso.id, [[528, 652], [620, 619], [648, 524], [615, 442]], { detach: true, order: img.order - 5 });
+    const tail = api.addPart('tail', '尾巴', torso.id, [[528, 652], [620, 619], [648, 524], [615, 442]], { detach: true, order: img.order - 0.5 });
     api.paintMask(tail, g => {
       TAIL_PATH(g); g.lineWidth = 46; g.stroke();
       g.globalCompositeOperation = 'destination-out';

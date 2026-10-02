@@ -42,15 +42,196 @@ const Blink = (() => {
     }
     return Math.min(1, v);
   }
+  // ---------- 閉眼公版（沒有閉眼差分時淡入）----------
+  // 公版 = 畫面左側那隻眼睛（角色的右眼）閉起來的睫毛線；右側那隻水平翻轉
+  let TPL = null;
+  function setTemplate(c) {
+    const w = c.width, h = c.height, px = c.getContext('2d').getImageData(0, 0, w, h).data, cov = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) { const l = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3; cov[i] = px[i * 4 + 3] / 255 * Math.max(0, Math.min(1, (200 - l) / 120)); }
+    // 每一欄：最粗那段（睫毛線本體）的中心與厚度；上方的雙眼皮細線跟著平移
+    const tc = new Float32Array(w).fill(NaN), tk = new Float32Array(w);
+    let bx0 = w, bx1 = -1, maxT = 1;
+    for (let x = 0; x < w; x++) {
+      let best = null, st = -1;
+      for (let y = 0; y <= h; y++) {
+        const on = y < h && cov[y * w + x] > 0.5;
+        if (on && st < 0) st = y;
+        if (!on && st >= 0) { if (!best || y - st > best[1] - best[0]) best = [st, y]; st = -1; }
+      }
+      if (best && best[1] - best[0] >= 2) { tc[x] = (best[0] + best[1]) / 2; tk[x] = best[1] - best[0]; maxT = Math.max(maxT, tk[x]); if (x < bx0) bx0 = x; bx1 = x; }
+    }
+    // 沒有本體的欄（兩端）用最近的中心
+    for (let x = bx0; x <= bx1; x++) if (isNaN(tc[x])) { let k = 1; while (isNaN(tc[x - k]) && isNaN(tc[x + k]) && k < w) k++; tc[x] = isNaN(tc[x - k]) ? tc[x + k] : tc[x - k]; }
+    TPL = bx1 > bx0 ? { w, h, cov, tc, bx0, bx1, maxT } : null;
+  }
+  // 依眼睛的閉合線、寬度、頭尾把公版變形成閉眼圖（eye 座標的 RGBA）
+  // 依閉合線、寬度、頭尾把公版變形成「一隻眼睛」的閉眼圖（eye 座標的 RGBA）；flip = 水平翻轉（畫面右側那隻）
+  function synthClosed(eye, w, h, cols, C0, lashT, flip, T0) {
+    if (!TPL || !cols.length) return null;
+    // 只用最寬的一段欄（雜點不算）
+    const groups = [];
+    let g = null, prev = -99;
+    for (const x of cols) { if (x - prev > 3) { g = [x, x]; groups.push(g); } else g[1] = x; prev = x; }
+    const [xa, xb] = groups.reduce((p, q) => (q[1] - q[0] > p[1] - p[0] ? q : p));
+    // 線稿顏色：眼睛裡最暗的 10% 像素的中位數
+    const dk = [];
+    for (let i = 0; i < w * h; i++) if (eye[i * 4 + 3] > 200) dk.push(i);
+    dk.sort((a, b) => (eye[a * 4] + eye[a * 4 + 1] + eye[a * 4 + 2]) - (eye[b * 4] + eye[b * 4 + 1] + eye[b * 4 + 2]));
+    const dark = dk.slice(0, Math.max(1, Math.round(dk.length * 0.1)));
+    const med = k => { const v = dark.map(i => eye[i * 4 + k]).sort((a, b) => a - b); return v[v.length >> 1] ?? 40; };
+    let col = [med(0), med(1), med(2)];
+    // 改用上眼皮（睫毛帶）的顏色：取該帶像素中偏暗的 30% 位置，不用最黑的線稿色
+    if (T0) {
+      const lum = i => eye[i * 4] + eye[i * 4 + 1] + eye[i * 4 + 2], band = [];
+      for (let x = xa; x <= xb; x++) {
+        if (isNaN(T0[x]) || isNaN(C0[x])) continue;
+        const y0 = Math.max(0, Math.floor(T0[x])), y1 = Math.min(h - 1, Math.ceil(T0[x] + Math.max(2, lashT[x] * 1.2)));
+        for (let y = y0; y <= y1; y++) { const i = y * w + x; if (eye[i * 4 + 3] > 200) band.push(i); }
+      }
+      if (band.length >= 6) {
+        band.sort((a, b) => lum(a) - lum(b));
+        const pick = band.slice(Math.floor(band.length * 0.2), Math.ceil(band.length * 0.4) + 1);
+        const m = k => { const v = pick.map(i => eye[i * 4 + k]).sort((a, b) => a - b); return v[v.length >> 1]; };
+        col = [m(0), m(1), m(2)];
+      }
+    }
+    const out = new Uint8ClampedArray(w * h * 4), span = Math.max(1, xb - xa);
+    for (let x = xa; x <= xb; x++) {
+      if (isNaN(C0[x])) continue;
+      let u = (x - xa) / span; if (flip) u = 1 - u;
+      const tx = Math.round(TPL.bx0 + u * (TPL.bx1 - TPL.bx0)), tcx = TPL.tc[tx];
+      if (isNaN(tcx)) continue;
+      const sv = Math.max(1.5, lashT[x] * 0.9) / TPL.maxT;   // 公版 1px → 眼睛幾 px（線的粗細 ≈ 上睫毛帶）
+      for (let y = 0; y < h; y++) {
+        const ty = tcx + (y + 0.5 - C0[x]) / sv, y0 = Math.floor(ty), f = ty - y0;
+        if (y0 < 0 || y0 + 1 >= TPL.h) continue;
+        const a = TPL.cov[y0 * TPL.w + tx] * (1 - f) + TPL.cov[(y0 + 1) * TPL.w + tx] * f;
+        if (a <= 0.01) continue;
+        const o = (y * w + x) * 4;
+        out[o] = col[0]; out[o + 1] = col[1]; out[o + 2] = col[2]; out[o + 3] = Math.round(a * 255);
+      }
+    }
+    return out;
+  }
+  // 眼睛本體的欄：高度夠的欄（細線、髮絲、臉的輪廓線這種只有一條線的欄不算），取最長的一段；
+  // 閉合線用二次曲線擬合，平滑、不會被雜點拉歪
+  function mainLine(G) {
+    const hs = G.cols.map(x => G.B0[x] - G.T0[x]).sort((a, b) => a - b), med = hs[hs.length >> 1] || 1;
+    const ok = G.cols.filter(x => G.B0[x] - G.T0[x] >= med * 0.45);
+    if (ok.length < 3) return { cols: G.cols, C0: G.C0 };
+    let best = [ok[0], ok[0]], cur = [ok[0], ok[0]];
+    for (let k = 1; k < ok.length; k++) { if (ok[k] - ok[k - 1] <= 3) cur[1] = ok[k]; else cur = [ok[k], ok[k]]; if (cur[1] - cur[0] > best[1] - best[0]) best = [cur[0], cur[1]]; }
+    const cols = ok.filter(x => x >= best[0] && x <= best[1]);
+    // 二次擬合 y = a + b u + c u²（u 以中心為 0）
+    const xm = (best[0] + best[1]) / 2;
+    let S = [0, 0, 0, 0, 0], T = [0, 0, 0];
+    for (const x of cols) { const u = x - xm, y = G.C0[x], p = [1, u, u * u, u * u * u, u * u * u * u]; for (let i = 0; i < 5; i++) S[i] += p[i]; T[0] += y; T[1] += y * u; T[2] += y * u * u; }
+    const M = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]];
+    const det = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const d = det(M);
+    const C0 = new Float32Array(G.C0);
+    if (Math.abs(d) > 1e-9) {
+      const solve = i => det(M.map((row, r) => row.map((v, c) => (c === i ? T[r] : v)))) / d;
+      const a = solve(0), b = solve(1), c = solve(2);
+      for (const x of cols) { const u = x - xm; C0[x] = Math.max(G.T0[x] + 1, Math.min(G.B0[x] - 0.5, a + b * u + c * u * u)); }
+    }
+    return { cols, C0 };
+  }
+  // ---------- 旋轉 / 分眼睛的共用工具 ----------
+  const sizeRot = (w, h, ang) => { const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang)); return [Math.ceil(w * c + h * s) + 2, Math.ceil(w * s + h * c) + 2]; };
+  // RGBA 轉正（-ang）→ 回傳 [資料, W, H]
+  function rotIn(arr, w, h, ang) {
+    if (!arr) return null;
+    const [W, H] = sizeRot(w, h, ang);
+    const src = document.createElement('canvas'); src.width = w; src.height = h;
+    src.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(arr), w, h), 0, 0);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const g = cv.getContext('2d');
+    g.translate(W / 2, H / 2); g.rotate(-ang); g.translate(-w / 2, -h / 2); g.drawImage(src, 0, 0);
+    return g.getImageData(0, 0, W, H).data;
+  }
+  // 轉正後的 canvas 轉回原本角度（w × h）
+  function rotOut(cv, w, h, ang) {
+    const o = document.createElement('canvas'); o.width = w; o.height = h;
+    const g = o.getContext('2d');
+    g.translate(w / 2, h / 2); g.rotate(ang); g.translate(-cv.width / 2, -cv.height / 2); g.drawImage(cv, 0, 0);
+    return o;
+  }
+  // 只留 x0 … x1 的欄（一隻眼睛）
+  function cut(arr, w, h, x0, x1) {
+    if (!arr) return null;
+    const out = new Uint8ClampedArray(arr);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < x0 || x > x1) out[(y * w + x) * 4 + 3] = 0;
+    return out;
+  }
+  // 以角度 ang 閉眼時，閉合線在原圖座標的角度（度）
+  function closureAngle(eye, w, h, B, ang) {
+    const [W, H] = sizeRot(w, h, ang), e2 = Math.abs(ang) < 1e-4 ? eye : rotIn(eye, w, h, ang), Ww = Math.abs(ang) < 1e-4 ? w : W, Hh = Math.abs(ang) < 1e-4 ? h : H;
+    const G0 = geom(e2, null, Ww, Hh, B);
+    if (!G0 || G0.cols.length < 4) return null;
+    const G = mainLine(G0);
+    const c = Math.cos(ang), s = Math.sin(ang);
+    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const x of G.cols) {
+      const qx = x + 0.5 - Ww / 2, qy = G.C0[x] - Hh / 2;
+      const px = c * qx - s * qy, py = s * qx + c * qy;   // 轉回原圖（相對中心）
+      n++; sx += px; sy += py; sxx += px * px; sxy += px * py;
+    }
+    const k = (n * sxy - sx * sy) / Math.max(1e-6, n * sxx - sx * sx);
+    return Math.atan(k) * 180 / Math.PI;
+  }
+  // 自動傾斜：找讓「閉起來的線」跟兩眼連線（target，度）平行的角度（每隻眼睛各自找）
+  function autoAngle(eye, w, h, B, target) {
+    let best = 0, bd = Infinity;
+    const tryA = deg => { const a = closureAngle(eye, w, h, B, deg * Math.PI / 180); if (a == null) return; const d = Math.abs(a - target); if (d < bd) { bd = d; best = deg; } };
+    for (let d = -40; d <= 40; d += 4) tryA(d);
+    const b0 = best;
+    for (let d = b0 - 3; d <= b0 + 3; d += 1) tryA(d);
+    return best;
+  }
+  // 分眼睛各自用自己的角度閉（parts = [{ x0, x1, ang }]）
+  function buildParts(eye, closed, w, h, B, parts) {
+    if (!parts || parts.length <= 1) return buildTilted(eye, closed, null, w, h, B, 0, parts && parts[0] ? parts[0].ang : 0);
+    const outs = parts.map(p => buildTilted(cut(eye, w, h, p.x0, p.x1), cut(closed, w, h, p.x0, p.x1), null, w, h, B, 0, p.ang)).filter(Boolean);
+    if (!outs.length) return null;
+    return outs[0].map((_, k) => {
+      const o = document.createElement('canvas'); o.width = w; o.height = h;
+      const g = o.getContext('2d');
+      for (const lv of outs) g.drawImage(lv[k], 0, 0);
+      return o;
+    });
+  }
+  // 用公版做出閉眼圖（整個眼睛圖層大小的 RGBA）：每隻眼睛依自己的角度、閉合線、寬度變形；畫面右側那隻翻轉
+  function templateClosed(eye, w, h, B, parts, midFrac) {
+    if (!TPL) return null;
+    const lash = B.lash ?? 0.4, out = new Uint8ClampedArray(w * h * 4);
+    const list = parts && parts.length ? parts : [{ x0: 0, x1: w - 1, ang: 0 }];
+    list.forEach((p, i) => {
+      const flip = list.length >= 2 ? i === list.length - 1 : (p.x0 + p.x1) / 2 > (midFrac ?? 0.5) * w;
+      const e1 = cut(eye, w, h, p.x0, p.x1), rot = Math.abs(p.ang) > 1e-4;
+      const [W, H] = rot ? sizeRot(w, h, p.ang) : [w, h], e2 = rot ? rotIn(e1, w, h, p.ang) : e1;
+      const G0 = geom(e2, null, W, H, B);
+      if (!G0) return;
+      const G = mainLine(G0);
+      const lashT = new Float32Array(W);
+      for (const x of G.cols) lashT[x] = Math.max(1, (G.C0[x] - G0.T0[x]) * lash);
+      const syn = synthClosed(e2, W, H, G.cols, G.C0, lashT, flip, G0.T0);
+      if (!syn) return;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      cv.getContext('2d').putImageData(new ImageData(syn, W, H), 0, 0);
+      const back = rot ? rotOut(cv, w, h, p.ang) : cv, px = back.getContext('2d').getImageData(0, 0, w, h).data;
+      for (let k = 0; k < w * h; k++) if (px[k * 4 + 3] > out[k * 4 + 3]) { out[k * 4] = px[k * 4]; out[k * 4 + 1] = px[k * 4 + 1]; out[k * 4 + 2] = px[k * 4 + 2]; out[k * 4 + 3] = px[k * 4 + 3]; }
+    });
+    return out;
+  }
   // 閉合程度 → 貼圖欄位（0 = 不換）
   const slotOf = (n, b) => b < 0.03 ? 0 : (n.image.variants.length + Math.max(1, Math.min(LEVELS, Math.round(b * LEVELS))));
 
   // ---------- 產生各閉合程度的圖 ----------
   // eye / closed / lid：同一個座標（眼睛圖層的像素）的 RGBA；回傳 LEVELS 張 canvas
-  function build(eye, closed, lid, w, h, B, dil = 0) {
-    const N = w * h;
-    const lash = B.lash ?? 0.4, low = B.low ?? 0.7, line = B.line ?? 0.62;
-    // 每一欄：眼睛上下緣、閉合線
+  // 每一欄：眼睛上下緣（T0 / B0）與閉合線（C0）
+  function geom(eye, closed, w, h, B) {
+    const line = B.line ?? 0.62;
     const top = new Float32Array(w).fill(NaN), bot = new Float32Array(w).fill(NaN), cl = new Float32Array(w).fill(NaN);
     for (let x = 0; x < w; x++) {
       let t = -1, b = -1, sw = 0, sy = 0;
@@ -82,6 +263,14 @@ const Blink = (() => {
     };
     const T0 = smooth(top, 5), B0 = smooth(bot, 5), C0 = smooth(cl, 7);
     for (const x of cols) C0[x] = Math.max(T0[x] + 1, Math.min(B0[x] - 0.5, C0[x]));
+    return { cols, top, bot, T0, B0, C0 };
+  }
+  function build(eye, closed, lid, w, h, B, dil = 0) {
+    const N = w * h;
+    const lash = B.lash ?? 0.4, low = B.low ?? 0.7;
+    const G = geom(eye, closed, w, h, B);
+    if (!G) return null;
+    const { cols, top, bot, T0, B0, C0 } = G;
     // 每一欄的累加（預乘 alpha），用來做區間平均（壓扁時不會鋸齒）
     const pre = new Float32Array((h + 1) * 4 * w);
     for (let x = 0; x < w; x++) {
@@ -215,5 +404,5 @@ const Blink = (() => {
       return o;
     });
   }
-  return { LEVELS, STYLES, styleOf, clampDur, durOf, at, slotOf, build, buildTilted };
+  return { LEVELS, STYLES, styleOf, clampDur, durOf, at, slotOf, build, buildTilted, buildParts, autoAngle, templateClosed, setTemplate, get hasTemplate() { return !!TPL; } };
 })();

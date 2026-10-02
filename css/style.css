@@ -667,3 +667,22 @@ body { -webkit-touch-callout: none; }
 .wizard .wfoot { justify-content: flex-end; }
 .wizard .whead .wcancel, .dialog h2 .wcancel { margin-left: auto; height: 26px; padding: 0 10px; font-size: 12px; font-weight: 400; }
 .dialog h2:has(.wcancel) { display: flex; align-items: center; gap: 8px; }
+
+/* v1.1.0：編輯目標（圖像 / 遮罩 / 深度） */
+.tgtseg { display: inline-flex; margin-left: 6px; border: 1px solid var(--line, #333); border-radius: 6px; overflow: hidden; }
+.tgtseg button { background: none; border: 0; color: inherit; padding: 0 9px; height: 26px; font-size: 12px; cursor: pointer; opacity: .75; }
+.tgtseg button.on { background: var(--accent, #e85d8a); color: #fff; opacity: 1; }
+.tgtseg button:disabled { opacity: .3; cursor: default; }
+
+.rnum2 { display: inline-flex; align-items: center; gap: 2px; }
+.rnum2 .num { width: 46px; }
+
+/* 通知 */
+.home .hbell { position: relative; }
+.home .hbell .bdot { position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: #e9557c; color: #fff; font-size: 10px; line-height: 15px; text-align: center; }
+.home .nlist { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.home .ncard { padding: 14px 16px; border-radius: 8px; background: #2a2a2a; border: 1px solid #3a3a3a; }
+.home .ntitle { font-weight: 700; font-size: 16px; }
+.home .ndate { color: var(--muted); font-size: 11.5px; margin: 2px 0 10px; }
+.home .nsec { margin-top: 8px; font-weight: 600; color: #e9557c; }
+.home .nline { margin: 4px 0; line-height: 1.55; color: var(--text); }

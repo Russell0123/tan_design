@@ -195,7 +195,7 @@ const Model = (() => {
 
   function newData() {
     return {
-      version: 5,
+      version: 5, orderUnit: 1,
       width: 0, height: 0,
       timeline: { fps: 30, bpm: 30, ease: 0.33 },
       intensity: 1,
@@ -248,8 +248,19 @@ const Model = (() => {
   }
 
   // 舊資料補齊新欄位
+  // 圖層順序：一律整理成 1, 2, 3 …（不重複、不跳號）；要插在誰前後就先給 ±0.5 再整理
+  function normalizeOrder(data) {
+    const list = data.nodes.filter(isDrawable).map((n, i) => [n, i]);
+    list.sort((a, b) => (a[0].order ?? 0) - (b[0].order ?? 0) || a[1] - b[1]);
+    list.forEach(([n], k) => { n.order = k + 1; });
+  }
   function migrate(data) {
     bpmOf(data);
+    // 舊檔的圖層順序是 10 的倍數，「前後」影格也是以 10 為一層 → 換成以 1 為一層
+    if (data.orderUnit !== 1) {
+      for (const n of data.nodes) if (n.keys && n.keys.z) for (const k of n.keys.z) k[1] = Math.round(k[1] / 10 * 10) / 10;
+      data.orderUnit = 1;
+    }
     P3D.settings(data);
     for (const n of data.nodes) {
       if (n.type === 'root') continue;
@@ -581,6 +592,14 @@ const Model = (() => {
           const sx = 1 + (o3.sx - 1) * w, sy = 1 + (o3.sy - 1) * w;
           OUT[0] = piv.x + (OUT[0] - piv.x) * sx + dx * w;
           OUT[1] = piv.y + (OUT[1] - piv.y) * sy + dy * w;
+          // 透視：把每一點當成 (x, 深度) 繞整體支點轉，靠近鏡頭的變大；以支點為中心放大，所以末端（例如腳尖）會被拉長放大
+          if (o3.persp) {
+            const z = ((relAt ? relAt(x, y) : o3.rel) + o3.pd) * o3.L, yaw = o3.drv.yaw;
+            const z2 = z * Math.cos(yaw) - (x - o3.ax) * Math.sin(yaw);
+            const s = Math.max(0.5, Math.min(2, (o3.F - z) / Math.max(o3.F * 0.2, o3.F - z2))), ws = 1 + (s - 1) * w;
+            OUT[0] = piv.x + (OUT[0] - piv.x) * ws;
+            OUT[1] = piv.y + (OUT[1] - piv.y) * ws;
+          }
         }
       }
       // 關鍵影格：翻轉（以支點為軸，像翻書頁）→ 位移
@@ -771,7 +790,7 @@ const Model = (() => {
     const w = [];
     if (['root', 'image', 'group'].includes(n.type)) return w;
     const leads = [...descendants(data, n.id)].some(id => { const c = byId(data, id); return c && c.type === 'image'; });
-    if (!pivotOf(n)) w.push('尚未放置支點（錨點工具點第一下）');
+    if (!pivotOf(n) && n.type !== 'fixed') w.push('尚未放置支點（錨點工具點第一下）');   // 固定物件不需要支點
     if (n.region.mode === 'auto' && !n.pins.length && !leads) w.push('沒有範圍：請放錨點或畫遮罩');
     if (!imageOf(data, n) && !leads) w.push('不在任何圖層底下，也沒有帶動任何圖層');
     const P = n.params;
@@ -803,6 +822,6 @@ const Model = (() => {
     I, aMul, aApply, aInv, aAbout, SHAPES, TYPES, ADD_TYPES, PRESETS, uid, newData, makeNode, defaultRegion,
     byId, children, descendants, isDrawable, imageOf, isShown, participants,
     pivotOf, movers, master, regionFields, allocate, polyDist,
-    buildEvals, applyChain, migrate, keyVal, zFade, hasKeys, KEY_TRACKS, spanOf, unitOf, bpmOf, globalCurves, globalAffine, variantAt, warnings, applyPreset, cyclesOf, totalOf, rigFrame, CURVES, trackDefault, baseType, TYPE_MENU, CURVE_SHAPES, partCurve, globalCurveSpecs, curveAt, loopIssues, loopMul, uniqueName, snapU,
+    buildEvals, applyChain, migrate, normalizeOrder, keyVal, zFade, hasKeys, KEY_TRACKS, spanOf, unitOf, bpmOf, globalCurves, globalAffine, variantAt, warnings, applyPreset, cyclesOf, totalOf, rigFrame, CURVES, trackDefault, baseType, TYPE_MENU, CURVE_SHAPES, partCurve, globalCurveSpecs, curveAt, loopIssues, loopMul, uniqueName, snapU,
   };
 })();

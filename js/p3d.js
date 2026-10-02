@@ -113,8 +113,11 @@ const P3D = (() => {
     const drv = { yaw: yn1 * my, pitch: pn1 * mp };
     const pd = parentDepth(data, n), rel = depthOf(n, data) - pd;
     const L = Math.max(data.width, data.height) * 0.12 * val(data.p3d, 'depth');
-    // 每單位深度差的位移（cx, cy）；在臉部精細的頭底下 = 相對臉部曲面的凹凸，沿臉的橫軸位移
-    let cx = L * Math.sin(drv.yaw), cy = L * Math.sin(drv.pitch);
+    // 「立體形變」關掉：只保留前後視差（含深度圖），不做壓縮、臉型、透視
+    const noWarp = !!P.noWarp;
+    // 每單位深度差的位移（cx, cy）：用整體的轉向（轉動範圍只影響這個物件自己的形變，不會把視差也縮小）
+    // 在臉部精細的頭底下 = 相對臉部曲面的凹凸，沿臉的橫軸位移（跟著自己的轉動範圍）
+    let cx = L * Math.sin(drv0.yaw), cy = L * Math.sin(drv0.pitch);
     const FA = faceAncestor(data, n);
     if (FA) {
       let ax = FA.chin.x - FA.top.x, ay = FA.chin.y - FA.top.y;
@@ -123,12 +126,16 @@ const P3D = (() => {
       cx = ay * su + ax * sv; cy = -ax * su + ay * sv;
     }
     const map = depthMap(n);
-    const face = faceOfNode(n);
-    const sx = face ? 1 : 1 - val(P, 'squashX') * (1 - Math.cos(drv.yaw)) * 1.5;
-    const sy = face ? 1 : 1 - val(P, 'squashY') * (1 - Math.cos(drv.pitch)) * 1.5;
+    const face = noWarp ? null : faceOfNode(n);
+    const sx = face || noWarp ? 1 : 1 - val(P, 'squashX') * (1 - Math.cos(drv.yaw)) * 1.5;
+    const sy = face || noWarp ? 1 : 1 - val(P, 'squashY') * (1 - Math.cos(drv.pitch)) * 1.5;
     const k = val(data.p3d, 'depth');
-    if (!face && !map && Math.abs(rel * cx) < 1e-3 && Math.abs(rel * cy) < 1e-3 && sx === 1 && sy === 1) return null;
-    return { dx: rel * cx, dy: rel * cy, cx, cy, pd, map, sx, sy, face, drv, k, yn: yn1 };
+    // 透視（近大遠小）：焦距越短越明顯；深度大（靠近）的地方轉向時放大 / 縮小得多
+    const persp = noWarp ? 0 : val(P, 'persp');
+    const M = Math.max(data.width, data.height), F = persp > 0 ? M * 0.3 / persp : 0;
+    const ax = (Model.byId(data, 'root').pins[0] || { x: data.width / 2 }).x;
+    if (!face && !map && !persp && Math.abs(rel * cx) < 1e-3 && Math.abs(rel * cy) < 1e-3 && sx === 1 && sy === 1) return null;
+    return { dx: rel * cx, dy: rel * cy, cx, cy, pd, rel, map, sx, sy, face, drv, k, yn: yn1, persp, F, L, ax };
   }
 
 

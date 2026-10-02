@@ -2,6 +2,7 @@
 const Icons = (() => {
   const s = body => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
   const P = {
+    bell: s('<path d="M3.5 11.5h9l-1.2-1.8V7a3.3 3.3 0 0 0-6.6 0v2.7z"/><path d="M6.7 13.6a1.4 1.4 0 0 0 2.6 0"/>'),
     bgtone: s('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 13.5l11-11v9.5a1.5 1.5 0 0 1-1.5 1.5z" fill="currentColor" stroke="none"/>'),
     blend: s('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
     clip: s('<path d="M4 2.5v6a2 2 0 0 0 2 2h7"/><path d="M10.5 8l2.5 2.5-2.5 2.5"/>'),
@@ -29,6 +30,8 @@ const Icons = (() => {
     pin: s('<circle cx="8" cy="6" r="3.3"/><path d="M8 9.3V15"/>'),
     brush: s('<path d="M13.5 2.5L7 9"/><path d="M6.8 9.2c-1.8-.4-3.3.8-3.3 2.6 0 1.1-.6 1.6-1.5 1.8 3.3 1.2 6.2-.6 4.8-4.4z" fill="currentColor" fill-opacity=".3"/>'),
     eraser: s('<path d="M9.5 2.8l3.7 3.7-6.7 6.7H3.2L1.8 11.8z"/><path d="M6 6.3l3.7 3.7M8 13.2h6"/>'),
+    gradient: s('<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M4 4h2v8H4z" fill="currentColor"/><path d="M7 4h1.5v8H7z" fill="currentColor" fill-opacity=".6"/><path d="M9.5 4h1v8h-1z" fill="currentColor" fill-opacity=".3"/>'),
+    shapes: s('<rect x="1.8" y="2" width="7" height="6" rx=".6"/><circle cx="10.5" cy="10.5" r="3.6"/>'),
     lasso: s('<path d="M3 3.5l9 1.5-1.5 5 2.5 3.5-7-1.5-4 1z" stroke-dasharray="2 1.6"/>'),
     mesh: s('<path d="M2 2h12v12H2zM2 8h12M8 2v12M2 2l12 12"/>'),
     fit: s('<path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/>'),
