@@ -749,7 +749,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 // 閉眼公版（assets/blink_closed.png）：載入後讓眨眼貼圖重算
 { const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0); Blink.setTemplate(c); }; im.src = typeof BLINK_TPL_SRC === 'string' ? BLINK_TPL_SRC : 'assets/blink_closed.png'; }
@@ -1134,7 +1134,7 @@ function tick(now) {
   last = now;
   if (!exporting) {
     // 播放時試轉一律回正（拉桿也歸零）
-    if (D && D.ui.playing && D.ui.probe && (D.ui.probe.abs || D.ui.probe.yaw || D.ui.probe.pitch)) { D.ui.probe = { yaw: 0, pitch: 0 }; renderProbe(); }
+    if (D && D.ui.playing && D.ui.probe && (D.ui.probe.abs || D.ui.probe.yaw || D.ui.probe.pitch)) { D.ui.probe = { yaw: 0, pitch: 0 }; renderProbe(true); }
     if (D && D.ui.playing && !restPose()) {
       D.ui.frame = Anim.mod(D.ui.frame + dt * D.data.timeline.fps * speed, total());
       updatePlaybar();
@@ -1439,8 +1439,9 @@ function overlayPlan(s) {
   const out = [], tab = curITab(), editTool = EDIT_TOOLS.has(tool.name);
   if (s && tab === 'depth' && (showRegion || editTool)) {
     const P = P3D.nodeOf(s), obj = P.mapId && D.masks.get(P.mapId);
-    if (stroke && stroke.kind === 'depth') out.push({ name: 'depth', src: stroke.canvas, key: 'stroke:' + (stroke.ver || 0), color: DEPTH_COLOR, alpha: 0.85, n: s });
-    else if (obj) out.push({ name: 'depth', src: maskCanvas(obj, DEPTH_COLOR), key: P.mapId + ':' + obj.v, color: DEPTH_COLOR, alpha: 0.75, n: s });
+    const rel = relatedTo(s);
+    if (stroke && stroke.kind === 'depth') out.push({ name: 'depth', src: stroke.canvas, key: 'stroke:' + (stroke.ver || 0), color: DEPTH_COLOR, alpha: 0.85, rel });
+    else if (obj) out.push({ name: 'depth', src: maskCanvas(obj, DEPTH_COLOR), key: P.mapId + ':' + obj.v, color: DEPTH_COLOR, alpha: 0.75, rel });
   }
   if (s && isPart(s) && tab === 'range' && (showRegion || editTool)) {
     const obj = s.region.mode === 'mask' && s.region.maskId && D.masks.get(s.region.maskId), host = Model.imageOf(D.data, s);
@@ -1704,7 +1705,7 @@ function drawOverlay(M, evals, animate) {
   if (drag && drag.type === 'shape') {
     g.save(); g.setTransform(dpr * V[0], 0, 0, dpr * V[3], dpr * V[4], dpr * V[5]);
     rectPath(drag.a, drag.b, tool.shapeKind === 'ellipse', drag.sq)(g);
-    g.setLineDash([5 / V[0], 4 / V[0]]); g.lineWidth = 1.5 / V[0]; g.strokeStyle = (tool.shapeMode === 'erase') !== drag.alt ? '#f06a6a' : '#fff'; g.stroke();
+    g.setLineDash([5 / V[0], 4 / V[0]]); g.lineWidth = 1.5 / V[0]; g.strokeStyle = selOpOf(drag.alt, drag.shift) === 'sub' ? '#f06a6a' : '#22d3ee'; g.stroke();
     g.restore();
   }
   // 圈眼睛：範圍（淡白）＋ 會變成眼睛的部分（紫）
@@ -2071,7 +2072,8 @@ function ensureTarget() {
   if (tg) tool.target = tg;
   return eyePick ? true : targetUsable(tool.target);
 }
-const toolUsable = name => EDIT_TOOLS.has(name) ? !!D && (!!eyePick || TARGETS.some(([t]) => targetUsable(t)))
+const toolUsable = name => name === 'shape' || name === 'wand' ? !!D   // 選取工具：不用先選分頁
+  : EDIT_TOOLS.has(name) ? !!D && (!!eyePick || TARGETS.some(([t]) => targetUsable(t)))
     : name === 'crop' ? !!D
   : name !== 'transform' || !!D && (sel()?.type === 'image' || !!D.ui.align || sel()?.type === 'group' || !!lgById(D.ui.selLg));
 function setTarget(t) { if (D && TGT_TAB[t]) setITab(TGT_TAB[t]); }
@@ -2105,7 +2107,7 @@ function renderStatus() {
     crop: '拖曳白色把手調整範圍 · 框內拖曳移動 · Enter 套用 · Esc 取消（選取圖片圖層時可切換「圖層 / 畫布」）',
     pin: !isPart(n) && !(n && n.type === 'image') ? (n && n.type === 'root' ? '拖曳整體支點' : '先選擇一個部位') : !n.pins.length ? '點擊放置支點（紅）' : '點擊加運動點（依順序連接）· 拖曳移動 · 雙擊或右鍵刪除',
     brush: '塗抹（作用在編輯目標）· Alt 反向 · [ ] 調整大小 · 有選取範圍時只畫在範圍內',
-    shape: tool.shapeKind === 'poly' ? '點擊描直線 · 按住拖曳自由描邊 · 點回起點或 Enter 完成 · Backspace 刪上一點 · Esc 取消' : '拖曳畫出形狀（Shift 正方 / 正圓）· Alt 反向',
+    shape: tool.shapeKind === 'poly' ? '選取範圍：點擊描直線 · 按住拖曳自由描邊 · 點回起點或 Enter 完成（Shift 加選、Alt 減選）· Backspace 刪上一點 · Esc 取消' : '拖曳框出選取範圍（按住 Shift 開始 = 加選、Alt = 減選；拖曳中按 Shift = 正方 / 正圓）',
     grad: '從起點拖到終點：起點那端填滿、往終點漸淡 · Alt 反向',
     wand: '點選顏色相近的區塊成為選取範圍 · Shift 加選 · Alt 減選 · Delete 擦除範圍內容 · Esc 取消選取',
   };
@@ -2381,8 +2383,9 @@ function targetNode() {
 // 形狀（多邊形 / 矩形 / 橢圓）完成：選取模式 → 選取範圍；否則填入 / 擦除編輯目標
 function applyShape(path, alt, shift) {
   const cov = covFromPath(path, tool.shapeFeather);
-  if (tool.shapeMode === 'select') { selSet(cov, alt ? 'sub' : shift ? 'add' : 'new'); return; }
-  applyCoverage(targetNode(), tool.target, cov, (tool.shapeMode === 'erase') !== alt);
+  // 形狀工具 = 選取工具（和魔術棒一樣）：Shift 加選、Alt 減選；之後用筆刷、漸層或「填入 / 擦除」作用在範圍內
+  selSet(cov, selOpOf(alt, shift));
+  renderToolDetail();
 }
 const rectPath = (a, b, ellipse, square) => g => {
   let w = b[0] - a[0], h = b[1] - a[1];
@@ -2672,7 +2675,7 @@ function setupPointer() {
         if (lassoNearStart(mx, my)) { finishLasso(); return; }
         lasso.pts.push([x, y]); drag = { type: 'lasso', lx: mx, ly: my }; cap(); return;
       }
-      if (!ensureTarget()) { toast('請先在左側選擇一個部位或圖層', 'warn'); return; }
+      if (!ensureTarget() && tool.name !== 'shape' && tool.name !== 'wand') { toast('請先在右上「屬性」區塊選擇範圍 / 圖像 / 深度分頁', 'warn'); return; }
       const tg = tool.target, tn = targetNode();
       const erase = (tool.mode === 'erase') !== e.altKey;
       if (tool.name === 'brush') {
@@ -2687,7 +2690,7 @@ function setupPointer() {
       if (tool.name === 'grad') { drag = { type: 'grad', a: [x, y], b: [x, y], erase }; cap(); return; }
       if (tool.name === 'shape') {
         if (tool.shapeKind === 'poly') {
-          if (!lasso) lasso = { pts: [], mode: (tool.shapeMode === 'erase') !== e.altKey ? 'sub' : 'add', alt: e.altKey, shift: e.shiftKey };
+          if (!lasso) lasso = { pts: [], mode: selOpOf(e.altKey, e.shiftKey) === 'sub' ? 'sub' : 'add', alt: e.altKey, shift: e.shiftKey };
           if (lassoNearStart(mx, my)) { finishLasso(); return; }
           lasso.pts.push([x, y]);
           drag = { type: 'lasso', lx: mx, ly: my }; cap();
@@ -2702,7 +2705,7 @@ function setupPointer() {
         if (!src) { toast('魔術棒要從影像圖層取色：請選取圖層或部位', 'warn'); return; }
         const a = D.assets.get(src.image.assetId), [lx, ly] = aApply(aInv(layerAffine(src.image, a)), ...restOf(x, y, src)).map(Math.floor);
         if (lx < 0 || ly < 0 || lx >= a.w || ly >= a.h) return;
-        wandClick(src, lx, ly, e.shiftKey ? 'add' : e.altKey ? 'sub' : 'new');
+        wandClick(src, lx, ly, selOpOf(e.altKey, e.shiftKey));
         return;
       }
     }
@@ -4104,7 +4107,7 @@ function renderDepthBar() {
   }
   const P = P3D.nodeOf(n);
   const hasMap = !!(P.mapId && D.masks.get(P.mapId));
-  const bar = hasMap ? rangeSlider('深度', () => [P.depthFar ?? P.depth ?? 0, P.depth ?? 0], (a, b) => { P.depthFar = a; P.depth = b; }, { min: -1, max: 1, step: 0.05, tip: '左端 = 無塗處（最深）、右端 = 有塗處（最淺）' })
+  const bar = hasMap ? rangeSlider('深度', () => [P.depthFar ?? P.depth ?? 0, P.depth ?? 0], (a, b) => { P.depthFar = a; P.depth = b; }, { mute: [P, 'depth'], min: -1, max: 1, step: 0.05, tip: '左端 = 無塗處（最深）、右端 = 有塗處（最淺）' })
     : slider('深度', () => P3D.depthOf(n, D.data), v => { P.depth = v; }, { noLive: true, mute: [P, 'depth'], min: -1, max: 1, step: 0.05, dec: 2, tip: on ? '選取部位 / 圖層的深度：-1 最後方 … +1 最前方' : '要先在「立體」分頁啟用立體' });
   if (hasMap) box.classList.add('range');
   if (!on) bar.classList.add('dis');
@@ -4370,7 +4373,7 @@ function renderLgInspector(box, g) {
       scaleNodes(lgIds(g), (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, s);
       commit(); renderAll();
     } }, '套用')), '以整組的中心縮放：圖層、錨點、遮罩一起'),
-    el('div', { class: 'hint' }, '移動：選取群組後用變形工具（T）拖曳。透明度：圖層區上方的「不透明」拉桿。'),
+
     el('div', { class: 'btnrow' }, el('button', { class: 'btn', onclick: () => { for (const m of mem) delete m.lg; D.data.lgroups = lgroups().filter(x => x !== g); D.ui.selLg = null; commit(); renderAll(); } }, '解散群組')));
 }
 const lgIds = g => { const s = new Set(); for (const m of lgMembers(g)) for (const id of Model.descendants(D.data, m.id)) s.add(id); return [...s]; };
@@ -4500,15 +4503,7 @@ function slider(label, get, set, o) {
     set(v); inp.value = toPos(v); num.value = (v * scale).toFixed(dec); paint(); if (!o.noCommit) commit(); if (!o.noLive) liveChanged(); o.after && o.after();
   });
   const row = el('div', { class: 'prow', title: o.tip || '' });
-  let dot = el('span');
-  if (o.mute) {
-    const [obj, key] = o.mute, isOff = () => !!(obj.off && obj.off[key]);
-    dot = el('button', { class: 'pdot', title: '單獨開啟 / 關閉這個數值的影響' });
-    const upd = () => { row.classList.toggle('muted', isOff()); dot.innerHTML = ''; dot.append(ico(isOff() ? 'dotOff' : 'dot')); };
-    dot.addEventListener('mousedown', e => e.preventDefault());
-    dot.addEventListener('click', () => { obj.off = obj.off || {}; obj.off[key] = !isOff(); if (!obj.off[key]) delete obj.off[key]; upd(); commit(); liveChanged(); });
-    upd();
-  }
+  const dot = o.mute ? muteDot(row, o.mute) : el('span');
   row.append(dot, el('label', {}, label), wrap, num);
   if (kInfo) {
     const { n: owner, tr, g0 } = kInfo;
@@ -4558,6 +4553,14 @@ function seg(options, get, set) {
   return box;
 }
 const group = (text, note) => [el('div', { class: 'group', title: note || '' }, text)];
+// 圖示的分段按鈕：options = [[值, 圖示, 說明]]
+function iconSeg(options, get, set) {
+  const box = el('div', { class: 'segsmall iseg' });
+  for (const [v, ic, tip] of options) box.append(el('button', { class: get() === v ? 'on' : '', title: tip, onclick: () => { set(v); box.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', options[i][0] === get())); } }, ico(ic)));
+  return box;
+}
+// 選取工具（形狀、魔術棒）：更換 / 增加 / 減少；按住 Shift = 增加、Alt = 減少
+const selOpOf = (alt, shift) => alt ? 'sub' : shift ? 'add' : tool.selOp || 'new';
 // ---------- 曲線面板（頻率旁的小扳手）----------
 // spec 是即時修改的物件（整體的 xCurve / yCurve、部位的 params.curve）；預覽畫兩個循環，中間的線是循環接點
 let curvePop = null;
@@ -4624,6 +4627,9 @@ function freqSlider(label, getSpec, title, tip, onSet) {
 
 function renderRight() { renderToolDetail(); renderInspector(); renderParams(); renderTimeline(); renderProbe(); }
 
+function selOpRow() {
+  return field('選取', iconSeg([['new', 'selNew', '更換選取範圍'], ['add', 'selAdd', '增加到選取範圍（或按住 Shift）'], ['sub', 'selSub', '從選取範圍減去（或按住 Alt）']], () => tool.selOp || 'new', v => { tool.selOp = v; }));
+}
 // 筆刷大小預覽：滑過 / 拖曳大小滑桿時，畫面上方顯示實際大小的圈
 let brushPeek = null;
 function peekBrush(row, key) {
@@ -4651,7 +4657,7 @@ function renderToolDetail() {
   if (D.ui.fit) {
     const f = D.ui.fit;
     box.append(
-      el('div', { class: 'note' }, '公版：Q版（軀幹、頭、側髮、後髮、呆毛；手臂之後自行加入）'),
+
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:4px 14px;margin:4px 0' },
         ...Object.keys(Templates.OPT_LABELS).map(k => el('label', { class: 'chk' },
           el('input', { type: 'checkbox', checked: !!f.opts[k], onchange: e => { f.opts[k] = e.target.checked; } }), Templates.OPT_LABELS[k]))),
@@ -4664,7 +4670,7 @@ function renderToolDetail() {
   if (EDIT_TOOLS.has(t)) {
     const tg = eyePick ? 'mask' : tool.target;
     const keys = { mask: ['brush', 'maskSoft', 'maskOpacity'], depth: ['depthSize', 'depthSoft', 'depthOpacity'], image: ['paintSize', 'paintSoft', 'paintOpacity'] }[tg];
-    const modeSeg = () => field('模式', seg([['add', tg === 'image' ? '＋ 畫' : '＋'], ['erase', '－ 擦']], () => tool.mode, v => { tool.mode = v; }),
+    const modeSeg = () => field('模式', iconSeg([['add', 'pen', '繪製（X 切換；Alt 暫時反向）'], ['erase', 'eraser', '擦除']], () => tool.mode, v => { tool.mode = v; }),
       tg === 'depth' ? '＋ 塗 = 變淺（靠近）、－ 擦 = 變深（Alt 反向，X 切換）；兩端深度在左側深度條設定' : '＋ 加上、－ 擦除（Alt 反向，X 切換）');
     const colorRow = () => {
       const color = el('input', { type: 'color', value: tool.paintColor, oninput: e => { tool.paintColor = e.target.value; } });
@@ -4673,26 +4679,25 @@ function renderToolDetail() {
     };
     if (t === 'brush') box.append(modeSeg(), ...(tg === 'image' ? [colorRow()] : []), ...brushSliders(...keys));
     if (t === 'shape') {
-      box.append(field('形狀', seg([['poly', '多邊形'], ['rect', '矩形'], ['ellipse', '橢圓']], () => tool.shapeKind, v => { tool.shapeKind = v; lasso = null; renderStatus(); })),
-        field('模式', seg([['add', '＋ 填入'], ['erase', '－ 擦除'], ['select', '選取範圍']], () => tool.shapeMode, v => { tool.shapeMode = v; }), '填入 / 擦除：直接作用在編輯目標；選取範圍：之後筆刷、漸層只畫在範圍內（Shift 加選、Alt 減選）'),
-        slider('邊緣羽化', () => tool.shapeFeather, v => { tool.shapeFeather = v; }, { min: 0, max: 200, step: 1, knee: [0.5, 30], noLive: true, noCommit: true, tip: 'px；形狀邊緣的模糊寬度' }),
-        ...(tg === 'image' ? [colorRow()] : []));
+      box.append(...(eyePick ? [] : [selOpRow()]), field('形狀', seg([['poly', '多邊形'], ['rect', '矩形'], ['ellipse', '橢圓']], () => tool.shapeKind, v => { tool.shapeKind = v; lasso = null; renderStatus(); })),
+        // 圈眼睛時多邊形是特殊模式（加入 / 減去眼睛範圍）；平常是選取工具
+        ...(eyePick ? [field('模式', seg([['add', '＋ 加入'], ['erase', '－ 減去']], () => tool.shapeMode === 'erase' ? 'erase' : 'add', v => { tool.shapeMode = v; }))] : []),
+        slider('邊緣羽化', () => tool.shapeFeather, v => { tool.shapeFeather = v; }, { min: 0, max: 200, step: 1, knee: [0.5, 30], noLive: true, noCommit: true, tip: 'px；選取範圍邊緣的模糊寬度' }),
+      );
     }
     if (t === 'grad') box.append(modeSeg(), ...(tg === 'image' ? [colorRow()] : []),
-      slider('不透明度', () => tool.gradOpacity ?? 1, v => { tool.gradOpacity = v; }, { min: 0.05, max: 1, step: 0.05, scale: 100, dec: 0, noLive: true, noCommit: true, tip: '%；起點那端的強度' }),
-      el('div', { class: 'hint' }, '從起點拖到終點：起點那端填滿，往終點漸淡。有選取範圍時只畫在範圍內。'));
-    if (t === 'wand') box.append(
+      slider('不透明度', () => tool.gradOpacity ?? 1, v => { tool.gradOpacity = v; }, { min: 0.05, max: 1, step: 0.05, scale: 100, dec: 0, noLive: true, noCommit: true, tip: '%；起點那端的強度' }));
+    if (t === 'wand') box.append(selOpRow(),
       slider('容許度', () => tool.wandTol, v => { tool.wandTol = v; }, { min: 0, max: 160, step: 1, noLive: true, noCommit: true, after: wandRun, tip: '顏色差多少以內算同一塊（0 = 完全同色）' }),
       slider('柔邊', () => tool.wandSoft, v => { tool.wandSoft = v; }, { min: 0, max: 12, step: 1, noLive: true, noCommit: true, after: wandRun, tip: 'px；選取邊緣的柔和寬度' }),
       slider('擴張 / 收縮', () => tool.wandGrow, v => { tool.wandGrow = v; }, { min: -12, max: 12, step: 1, noLive: true, noCommit: true, after: wandRun, tip: 'px；正 = 往外擴、負 = 往內縮' }),
-      el('div', { class: 'frow' }, el('label', {}, ''), checkbox('只選相連的', () => tool.wandContig, v => { tool.wandContig = v; wandRun(); })),
-      el('div', { class: 'hint' }, '點圖層選取顏色相近的區塊（Shift 加選、Alt 減選），再用下面的按鈕填入或擦除編輯目標。'));
+      el('div', { class: 'frow' }, el('label', {}, ''), checkbox('只選相連的', () => tool.wandContig, v => { tool.wandContig = v; wandRun(); })));
     if (selArea) {
       const nodeT = targetNode();
-      box.append(el('div', { class: 'hint' }, '有選取範圍：筆刷、漸層只會畫在範圍內。'),
-        el('div', { class: 'btnrow' },
-          el('button', { class: 'btn primary', disabled: nodeT ? null : 'disabled', title: '把整個選取範圍填入編輯目標', onclick: () => applyCoverage(targetNode(), tool.target, new Uint8Array(selArea.data), false) }, '填入'),
-          el('button', { class: 'btn', disabled: nodeT ? null : 'disabled', title: '擦除編輯目標在選取範圍內的內容（Delete）', onclick: () => applyCoverage(targetNode(), tool.target, new Uint8Array(selArea.data), true) }, '擦除'),
+      const can = nodeT && targetUsable(tool.target), why = can ? '' : '（先在右上「屬性」區塊選範圍 / 圖像 / 深度分頁）';
+      box.append(el('div', { class: 'btnrow selacts' },
+          el('button', { class: 'tb icon', disabled: can ? null : 'disabled', title: '填入：把整個選取範圍填進目前分頁的對象' + why, onclick: () => applyCoverage(targetNode(), tool.target, new Uint8Array(selArea.data), false) }, ico('bucket')),
+          el('button', { class: 'tb icon', disabled: can ? null : 'disabled', title: '擦除：清掉目前分頁的對象在選取範圍內的內容（Delete）' + why, onclick: () => applyCoverage(targetNode(), tool.target, new Uint8Array(selArea.data), true) }, ico('bucketOut')),
           el('button', { class: 'btn', onclick: () => { selInvert(); renderToolDetail(); } }, '反轉'),
           el('button', { class: 'btn', onclick: selClear }, '取消選取')));
     }
@@ -4720,7 +4725,7 @@ function renderTransformDetail(box) {
     return i;
   };
   box.append(
-    tg.align ? el('div', { class: 'note' }, '拖曳新圖對齊舊圖') : null,
+    null,
     field('位置', el('div', { class: 'inline' }, num(() => p.x, v => { p.x = v; }), num(() => p.y, v => { p.y = v; }))),
     field('縮放 / 旋轉', el('div', { class: 'inline' }, num(() => (p.scale ?? 1) * 100, v => { p.scale = Math.max(1, v) / 100; }), num(() => p.rot || 0, v => { p.rot = v; }))),
   );
@@ -4792,7 +4797,7 @@ function renderBlinkUI(box, n) {
     // 頭：從圖上圈出眼睛（眼睛畫在圖上、沒有單獨圖層時）
     if (eyePick && eyePick.headId === n.id) {
       const mode = tool.name === 'brush' ? 'brush' : 'lasso';
-      box.append(el('div', { class: 'hint' }, mode === 'lasso' ? '多邊形：圈住眼睛，裡面會自動判斷哪些是眼睛（模式選「擦除」或按 Alt = 減去）。紫色 = 會變成眼睛的部分。' : '筆刷：直接畫眼睛的範圍（不經過自動判斷），＋ 加入、－ 或 Alt 擦除。紫色 = 會變成眼睛的部分。'),
+      box.append(
         field('工具', seg([['lasso', '套索'], ['brush', '筆刷']], () => mode, v => { if (v === 'brush') setTool('brush'); else { tool.shapeKind = 'poly'; setTool('shape'); } renderInspector(); })),
         el('div', { class: 'btnrow' },
           el('button', { class: 'btn primary', disabled: eyePick.any ? null : 'disabled', onclick: () => finishEyePick() }, '確定，分成眼睛圖層'),
@@ -5162,13 +5167,13 @@ function renderImageTab(box, n) {
 // 深度分頁：深度的數值與深度圖（用筆刷 / 漸層 / 形狀 / 魔術棒畫）；立體沒啟用時整頁灰掉
 function renderDepthTab(box, n) {
   const S = P3D.settings(D.data), on = !!S.enabled, P = P3D.nodeOf(n);
-  if (!on) box.append(el('div', { class: 'hint p3don' }, '立體還沒啟用，深度不會有作用。', el('button', { class: 'btn', onclick: () => { S.enabled = true; commit(); renderAll(); renderTools(); } }, '啟用立體')));
+  if (!on) box.append(el('div', { class: 'hint p3don' }, '立體未啟用', el('button', { class: 'btn', onclick: () => { S.enabled = true; commit(); renderAll(); renderTools(); } }, '啟用立體')));
   const body = el('div', { class: on ? '' : 'tabdis' });
   const hasMap = !!(P.mapId && D.masks.get(P.mapId));
   body.append(
-    hasMap ? rangeSlider('深度', () => [P.depthFar ?? P.depth ?? 0, P.depth ?? 0], (a, b) => { P.depthFar = a; P.depth = b; }, { min: -1, max: 1, step: 0.05, tip: '左端 = 深度圖沒塗的地方（最深）、右端 = 塗滿的地方（最淺）' })
-      : slider('深度', () => P3D.depthOf(n, D.data), v => { P.depth = v; }, { noLive: true, mute: [P, 'depth'], min: -1, max: 1, step: 0.05, dec: 2, tip: '-1 最後方 … +1 最前方' }),
-    el('div', { class: 'note' }, hasMap ? '有深度圖：用筆刷、漸層、形狀、魔術棒調整（有塗 = 淺 / 靠近）。' : '用筆刷、漸層、形狀、魔術棒畫深度圖：有塗的地方比較淺（靠近），會自動變成深淺兩端可調。'),
+    hasMap ? rangeSlider('深度', () => [P.depthFar ?? P.depth ?? 0, P.depth ?? 0], (a, b) => { P.depthFar = a; P.depth = b; }, { mute: [P, 'depth'], min: -1, max: 1, step: 0.05, tip: '左端 = 深度圖沒塗的地方（最深）、右端 = 塗滿的地方（最淺）。左側圓點關掉 = 跟父層同一個深度' })
+      : slider('深度', () => P3D.depthOf(n, D.data), v => { P.depth = v; }, { noLive: true, mute: [P, 'depth'], min: -1, max: 1, step: 0.05, dec: 2, tip: '-1 最後方 … +1 最前方。左側圓點關掉 = 跟父層同一個深度' }),
+    el('div', { class: 'note' }, '有塗 = 淺（靠近）、沒塗 = 深'),
     el('div', { class: 'btnrow' },
       el('button', { class: 'btn', onclick: () => { showRegion = !showRegion; $('#tglRegion').classList.toggle('on', showRegion); renderInspector(); } }, showRegion ? '隱藏深度圖預覽' : '顯示深度圖預覽'),
       el('button', { class: 'btn', disabled: hasMap ? null : 'disabled', onclick: () => { P.mapId = null; P.depth = P3D.depthOf(n, D.data); commit(); renderAll(); } }, '清除深度圖')));
@@ -5178,7 +5183,6 @@ function renderDepthTab(box, n) {
 // 範圍分頁：錨點周圍 / 遮罩，牽連範圍、獨立圖層
 function renderRangeTab(box, n) {
   const R = n.region;
-  box.append(el('div', { class: 'note' }, '核心 = 完全跟著動的區域；牽連範圍 = 核心外越遠越小的影響。遮罩可以用筆刷、形狀、漸層、魔術棒編輯。'));
   box.append(selectField('方式', [['auto', '錨點周圍（自動）'], ['mask', '遮罩（可編輯）'], ['none', '無']], () => R.mode, v => {
     if (v === 'mask' && R.mode === 'auto') { R.mode = 'auto'; editableMask(D, n); }
     else R.mode = v;
@@ -5217,7 +5221,7 @@ function renderParams() {
   box.innerHTML = '';
   box.classList.remove('p3doff');
   if (!D) return;
-  if (lgById(D.ui.selLg)) { box.append(el('div', { class: 'hint' }, '群組只綁定圖層的前後順序；動作參數在各個圖層 / 部位上設定。')); return; }
+  if (lgById(D.ui.selLg)) return;
   const n = sel();
   if (!n) return;
   // 動態 / 立體 分頁：共用部位、錨點與範圍，參數分開
@@ -5228,7 +5232,7 @@ function renderParams() {
     renderP3D(box, n);
     if (!P3D.settings(D.data).enabled) {
       box.classList.add('p3doff');
-      if (n.type !== 'root') box.insertBefore(el('div', { class: 'hint p3don' }, '立體還沒啟用。', el('button', { class: 'btn', onclick: () => { P3D.settings(D.data).enabled = true; commit(); renderAll(); } }, '啟用立體')), box.children[1]);
+      if (n.type !== 'root') box.insertBefore(el('div', { class: 'hint p3don' }, '立體未啟用', el('button', { class: 'btn', onclick: () => { P3D.settings(D.data).enabled = true; commit(); renderAll(); } }, '啟用立體')), box.children[1]);
       box.querySelectorAll('input, select, button').forEach(e => { if (!e.closest('.ptabs') && !e.closest('.p3don')) e.disabled = true; });
     }
     return;
@@ -5325,6 +5329,16 @@ function nodeBounds(n) {
   return x1 < x0 ? { x0: 0, y0: 0, x1: W, y1: H } : { x0, y0, x1, y1 };
 }
 // 雙端拉桿：拉兩端設定範圍（get → [lo, hi]）
+// 左側圓點：單獨開啟 / 關閉這個數值的影響（mute = [物件, key]）
+function muteDot(row, [obj, key]) {
+  const isOff = () => !!(obj.off && obj.off[key]);
+  const dot = el('button', { class: 'pdot', title: key === 'depth' ? '開啟 / 關閉深度（關掉 = 跟父層同一個深度，深度圖也不作用）' : '單獨開啟 / 關閉這個數值的影響' });
+  const upd = () => { row.classList.toggle('muted', isOff()); dot.innerHTML = ''; dot.append(ico(isOff() ? 'dotOff' : 'dot')); };
+  dot.addEventListener('mousedown', e => e.preventDefault());
+  dot.addEventListener('click', () => { obj.off = obj.off || {}; obj.off[key] = !isOff(); if (!obj.off[key]) delete obj.off[key]; upd(); commit(); liveChanged(); if (key === 'depth') { renderDepthBar(); renderInspector(); renderOrder(); } });
+  upd();
+  return dot;
+}
 function rangeSlider(label, get, set, o) {
   const span = o.max - o.min, bip = o.min < 0 && o.max > 0, dec = o.dec ?? 2;
   const fill = el('i', { class: 'fill' }), hL = el('i', { class: 'rh' }), hR = el('i', { class: 'rh' });
@@ -5362,7 +5376,9 @@ function rangeSlider(label, get, set, o) {
     track.addEventListener('pointermove', move); track.addEventListener('pointerup', up);
   });
   track.addEventListener('dblclick', () => { if (o.reset) { set(...o.reset); paint(); commit(); o.after && o.after(); } });
-  return el('div', { class: 'prow', title: o.tip || '' }, el('span'), el('label', {}, label), track, txt);
+  const row = el('div', { class: 'prow rrow', title: o.tip || '' });
+  row.append(o.mute ? muteDot(row, o.mute) : el('span'), el('label', {}, label), track, txt);
+  return row;
 }
 function renderP3D(box, n) {
   const S = P3D.settings(D.data);
@@ -6096,13 +6112,13 @@ function renderStrip() {
 }
 
 // ---------- 試轉拉桿（預覽畫面下方 / 右方）----------
-function renderProbe() {
+function renderProbe(force = false) {
   const on = !!(D && D.data.p3d?.enabled);
   const pr = D ? (D.ui.probe || (D.ui.probe = { yaw: 0, pitch: 0 })) : null;
   for (const [id, k] of [['#probeH', 'yaw'], ['#probeV', 'pitch']]) {
     const box = $(id), inp = box.querySelector('input');
     box.classList.toggle('hidden', !on);
-    if (pr && document.activeElement !== inp) inp.value = pr[k];
+    if (pr && (force || document.activeElement !== inp)) { inp.value = pr[k]; if (force && document.activeElement === inp) inp.blur(); }
     box.classList.toggle('on', !!(pr && pr[k]));
   }
 }
@@ -6894,8 +6910,7 @@ function renderSimple() {
     slider('幅度', () => simpleAmpOf(first), v => { for (const n of nodes) simpleSetAmp(n, v); }, { min: 0, max: 1, step: 0.01, scale: 100, dec: 0, noLive: true, tip: '%；擺動距離、鬆度、圓度一起調（快速建立完是 40）' }),
     slider('頻率', () => simpleFreqOf(first), v => { for (const n of nodes) simpleSetFreq(n, v); }, { min: 0.5, max: 4, step: 0.5, dec: 1, noLive: true, tip: '每個循環來回幾次（整個部位與鍊一起）' }),
     slider('延遲', () => first.delay || 0, v => { for (const n of nodes) { n.delay = v; n.params.lag = v; } }, { min: 0, max: 8, step: 1, noLive: true, tip: '單位 1/32 循環；整個部位與鍊的節點間延遲一起' }),
-    slider('範圍', () => simpleRangeOf(first), v => { for (const n of nodes) simpleSetRange(n, v); }, { min: 0.5, max: 2, step: 0.05, scale: 100, dec: 0, noLive: true, tip: '%；會跟著動的範圍放大 / 縮小' }),
-    el('div', { class: 'hint' }, `${nodes.length} 個部位：${nodes.map(n => n.name).join('、')}`));
+    slider('範圍', () => simpleRangeOf(first), v => { for (const n of nodes) simpleSetRange(n, v); }, { min: 0.5, max: 2, step: 0.05, scale: 100, dec: 0, noLive: true, tip: '%；會跟著動的範圍放大 / 縮小' }));
   if (!on) pane.classList.add('soff');
 }
 // 簡易模式的疊圖：快速建模的點；勾「顯示節點與範圍」時畫目前分頁類型的節點

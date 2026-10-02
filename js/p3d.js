@@ -74,8 +74,9 @@ const P3D = (() => {
   function depthOf(n, data) {
     if (!has3d(n)) return 0;
     const P = nodeOf(n);
-    if (P.depth === null || P.depth === undefined) return data ? parentDepth(data, n) : 0;
-    return val(P, 'depth');
+    // 沒設（null）或關掉 = 跟父層同一個深度（沒有自己的前後視差）
+    if (P.depth === null || P.depth === undefined || (P.off && P.off.depth)) return data ? parentDepth(data, n) : 0;
+    return P.depth || 0;
   }
   function parentDepth(data, n) {
     for (let p = n.parent && Model.byId(data, n.parent); p; p = p.parent && Model.byId(data, p.parent)) if (has3d(p)) return depthOf(p, data);
@@ -98,7 +99,7 @@ const P3D = (() => {
   const setMaps = m => { maps = m; };
   function depthMap(n) {
     const P = n.p3d;
-    if (!P || !P.mapId || !maps) return null;
+    if (!P || !P.mapId || !maps || (P.off && P.off.depth)) return null;   // 深度關掉：深度圖也不作用
     const obj = maps.get(P.mapId);
     if (!obj) return null;
     const near = val(P, 'depth'), far = P.depthFar ?? near;

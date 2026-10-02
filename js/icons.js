@@ -3,6 +3,11 @@ const Icons = (() => {
   const s = body => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
   const P = {
     bell: s('<path d="M3.5 11.5h9l-1.2-1.8V7a3.3 3.3 0 0 0-6.6 0v2.7z"/><path d="M6.7 13.6a1.4 1.4 0 0 0 2.6 0"/>'),
+    selNew: s('<rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor" fill-opacity=".35"/>'),
+    selAdd: s('<rect x="1.8" y="1.8" width="8" height="8" rx="1" fill="currentColor" fill-opacity=".35"/><rect x="6" y="6" width="8.2" height="8.2" rx="1" fill="currentColor" fill-opacity=".35"/><path d="M10.1 8.4v3.4M8.4 10.1h3.4"/>'),
+    selSub: s('<rect x="1.8" y="1.8" width="8" height="8" rx="1" fill="currentColor" fill-opacity=".35"/><rect x="6" y="6" width="8.2" height="8.2" rx="1"/><path d="M8.4 10.1h3.4"/>'),
+    bucket: s('<path d="M7 1.8l5.6 5.6-5 5a1.4 1.4 0 0 1-2 0L2.4 9.2a1.4 1.4 0 0 1 0-2z" fill="currentColor"/><path d="M13.6 10.2s1.2 1.6 1.2 2.4a1.2 1.2 0 0 1-2.4 0c0-.8 1.2-2.4 1.2-2.4z" fill="currentColor"/><path d="M5.4 3.4L3.6 1.6"/>'),
+    bucketOut: s('<path d="M7 1.8l5.6 5.6-5 5a1.4 1.4 0 0 1-2 0L2.4 9.2a1.4 1.4 0 0 1 0-2z"/><path d="M13.6 10.2s1.2 1.6 1.2 2.4a1.2 1.2 0 0 1-2.4 0c0-.8 1.2-2.4 1.2-2.4z"/><path d="M5.4 3.4L3.6 1.6"/>'),
     bgtone: s('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 13.5l11-11v9.5a1.5 1.5 0 0 1-1.5 1.5z" fill="currentColor" stroke="none"/>'),
     blend: s('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
     clip: s('<path d="M4 2.5v6a2 2 0 0 0 2 2h7"/><path d="M10.5 8l2.5 2.5-2.5 2.5"/>'),

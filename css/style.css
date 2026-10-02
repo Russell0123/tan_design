@@ -715,3 +715,17 @@ body { -webkit-touch-callout: none; }
 
 .tabdis { opacity: .4; pointer-events: none; }
 .toolbar .tb.toggle:disabled { opacity: .3; cursor: default; }
+
+/* 兩端數值的拉桿：數字框不被切掉 */
+.prow.rrow { grid-template-columns: 14px 56px minmax(60px, 1fr) auto; }
+.depthbar .prow.rrow, .depthbar.range .prow { grid-template-columns: 14px 34px minmax(50px, 1fr) auto; }
+.rnum2 .num { width: 44px; }
+
+.segsmall.iseg button { padding: 2px 6px; display: inline-flex; align-items: center; }
+.btnrow.selacts .tb.icon { width: 30px; height: 26px; }
+
+/* 按鈕、分段按鈕的文字不換行；工具列的拉桿標題不截斷 */
+.btn, .segsmall button, .itabs button { white-space: nowrap; }
+.segsmall button { padding: 0 8px; }
+.toolstrip .prow { flex: none; }
+.toolstrip .prow > label { overflow: visible; text-overflow: clip; }
