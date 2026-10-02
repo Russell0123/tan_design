@@ -749,7 +749,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '0.1.2';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 // 閉眼公版（assets/blink_closed.png）：載入後讓眨眼貼圖重算
 { const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0); Blink.setTemplate(c); }; im.src = typeof BLINK_TPL_SRC === 'string' ? BLINK_TPL_SRC : 'assets/blink_closed.png'; }
@@ -1133,6 +1133,8 @@ function tick(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (!exporting) {
+    // 播放時試轉一律回正（拉桿也歸零）
+    if (D && D.ui.playing && D.ui.probe && (D.ui.probe.abs || D.ui.probe.yaw || D.ui.probe.pitch)) { D.ui.probe = { yaw: 0, pitch: 0 }; renderProbe(); }
     if (D && D.ui.playing && !restPose()) {
       D.ui.frame = Anim.mod(D.ui.frame + dt * D.data.timeline.fps * speed, total());
       updatePlaybar();
