@@ -6353,7 +6353,7 @@ async function showHome() {
   h.append(
     el('div', { class: 'hhead' }, el('b', {}, '彈design'), el('span', { class: 'grow' }),
       tabs.length ? el('button', { class: 'btn', onclick: hideHome }, '回到編輯') : null,
-      (() => { const un = unreadNotices(); return el('button', { class: 'tb icon hbell', title: '通知（更新內容）', onclick: () => showNotices() }, ico('bell'), un ? el('span', { class: 'bdot' }, un > 9 ? '9+' : String(un)) : null); })()),
+      (() => { const un = unreadNotices(); return el('button', { class: 'tb icon hbell', title: '通知（更新內容）', onclick: () => showNotices() }, ico('bell'), un ? el('span', { class: 'bdot', title: `${un} 則未讀` }) : null); })()),
     el('div', { class: 'hbody' },
       el('div', { class: 'hcol' }, el('div', { class: 'hsec' }, ' '), newTile),
       el('div', { class: 'hdiv' }),
@@ -6364,14 +6364,18 @@ const NOTICE_KEY = 'tan.noticeSeen';
 function seenNotices() { try { return JSON.parse(localStorage.getItem(NOTICE_KEY) || '[]'); } catch (_) { return []; } }
 function unreadNotices() { const seen = seenNotices(); return (typeof NOTICES !== 'undefined' ? NOTICES : []).filter(n => !seen.includes(n.id)).length; }
 function showNotices() {
-  const h = $('#home'), list = typeof NOTICES !== 'undefined' ? NOTICES : [];
+  const list = typeof NOTICES !== 'undefined' ? NOTICES : [], m = $('#modal');
+  const seen = seenNotices();
   try { localStorage.setItem(NOTICE_KEY, JSON.stringify(list.map(n => n.id))); } catch (_) { /* 無法記錄已讀 */ }
-  h.innerHTML = '';
-  h.append(
-    el('div', { class: 'hhead' }, el('b', {}, '通知'), el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: showHome }, '返回首頁')),
+  const close = () => { m.classList.add('hidden'); m.onclick = null; if (!$('#home').classList.contains('hidden')) showHome(); };   // 關掉後刷新首頁（鈴鐺的紅點）
+  m.innerHTML = '';
+  m.append(el('div', { class: 'dialog noticed' },
+    el('div', { class: 'nhead' }, el('b', {}, '通知'), el('span', { class: 'grow' }), el('button', { class: 'tb icon', title: '關閉', onclick: close }, ico('close'))),
     el('div', { class: 'nlist' }, ...(list.length ? list.map(n => el('div', { class: 'ncard' },
-      el('div', { class: 'ntitle' }, n.title), el('div', { class: 'ndate' }, n.date),
-      el('div', { class: 'nbody' }, ...n.body.map(t => el('div', { class: /^【/.test(t) ? 'nsec' : 'nline' }, t))))) : [el('div', { class: 'hdate' }, '目前沒有通知')])));
+      el('div', { class: 'ntitle' }, seen.includes(n.id) ? null : el('span', { class: 'ndot' }), n.title), el('div', { class: 'ndate' }, n.date),
+      el('div', { class: 'nbody' }, ...n.body.map(t => el('div', { class: /^【/.test(t) ? 'nsec2' : 'nline' }, t))))) : [el('div', { class: 'ndate' }, '目前沒有通知')]))));
+  m.classList.remove('hidden');
+  m.onclick = e => { if (e.target === m) close(); };
 }
 function hideHome() { const h = $('#home'); if (h) h.classList.add('hidden'); document.body.classList.remove('onhome'); navTrap(); }
 // 新增：完整模式（A）或快速建立（B 單張 / C 分層）
