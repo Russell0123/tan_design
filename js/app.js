@@ -6364,17 +6364,17 @@ const NOTICE_KEY = 'tan.noticeSeen';
 function seenNotices() { try { return JSON.parse(localStorage.getItem(NOTICE_KEY) || '[]'); } catch (_) { return []; } }
 function unreadNotices() { const seen = seenNotices(); return (typeof NOTICES !== 'undefined' ? NOTICES : []).filter(n => !seen.includes(n.id)).length; }
 function showNotices() {
-  const list = typeof NOTICES !== 'undefined' ? NOTICES : [], m = $('#modal');
+  const list = typeof NOTICES !== 'undefined' ? NOTICES : [], m = $('#modal'), bell = $('#home .hbell');
   const seen = seenNotices();
   try { localStorage.setItem(NOTICE_KEY, JSON.stringify(list.map(n => n.id))); } catch (_) { /* 無法記錄已讀 */ }
-  const close = () => { m.classList.add('hidden'); m.onclick = null; if (!$('#home').classList.contains('hidden')) showHome(); };   // 關掉後刷新首頁（鈴鐺的紅點）
+  const close = () => { m.classList.add('hidden'); m.classList.remove('popr'); m.onclick = null; if (!$('#home').classList.contains('hidden')) showHome(); };   // 關掉後刷新首頁（鈴鐺的紅點）
+  const r = bell ? bell.getBoundingClientRect() : { bottom: 48, right: innerWidth - 16 };
   m.innerHTML = '';
-  m.append(el('div', { class: 'dialog noticed' },
-    el('div', { class: 'nhead' }, el('b', {}, '通知'), el('span', { class: 'grow' }), el('button', { class: 'tb icon', title: '關閉', onclick: close }, ico('close'))),
+  m.append(el('div', { class: 'dialog noticed', style: `top:${Math.round(r.bottom + 8)}px; right:${Math.max(8, Math.round(innerWidth - r.right))}px` },
     el('div', { class: 'nlist' }, ...(list.length ? list.map(n => el('div', { class: 'ncard' },
       el('div', { class: 'ntitle' }, seen.includes(n.id) ? null : el('span', { class: 'ndot' }), n.title), el('div', { class: 'ndate' }, n.date),
-      el('div', { class: 'nbody' }, ...n.body.map(t => el('div', { class: /^【/.test(t) ? 'nsec2' : 'nline' }, t))))) : [el('div', { class: 'ndate' }, '目前沒有通知')]))));
-  m.classList.remove('hidden');
+      el('ul', { class: 'nbody' }, ...n.body.map(t => el('li', {}, t))))) : [el('div', { class: 'ndate' }, '目前沒有通知')]))));
+  m.classList.add('popr'); m.classList.remove('hidden');
   m.onclick = e => { if (e.target === m) close(); };
 }
 function hideHome() { const h = $('#home'); if (h) h.classList.add('hidden'); document.body.classList.remove('onhome'); navTrap(); }
