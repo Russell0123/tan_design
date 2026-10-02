@@ -1182,7 +1182,7 @@ function drawScene(t, animate, M, cw, ch, overlaySel) {
   let drs = orderedDrawables(D);
   const RF = animate ? rigFrames(t) : [];
   // 關鍵影格：前後順序（z）與透明度（只在播放 / 預覽時）
-  const keyed = animate && !P3D.probe;
+  const keyed = animate && !P3D.probeOnly;
   // 圖層不透明度（靜態） × 關鍵影格的透明度
   const alphaOf = dr => { const o = node(dr.id), gl = o.lg && D.data.lgroups && D.data.lgroups.find(g => g.id === o.lg), base = (o.opacity ?? 1) * (gl ? gl.opacity ?? 1 : 1); if (!keyed) return base; return base * (Model.hasKeys(o) ? Math.max(0, Math.min(1, Model.keyVal(D.data, o, 'op', t))) * Model.zFade(D.data, o, t) : 1); };
   const zOf = dr => { const o = node(dr.id); return o.order + (keyed && Model.hasKeys(o) ? Model.keyVal(D.data, o, 'z', t) : 0); };
@@ -1397,8 +1397,9 @@ function draw() {
   if (!D || !D.data.width) return;
   // 只有播放 / 暫停：暫停在任何時間都能編輯；只有把手定義在靜止位置的工具（變形、裁切、快速建模…）會顯示靜止姿勢
   const rest = restPose();
+  // 試轉（暫停時）：靜止姿勢的工具 = 只有轉向；其他 = 目前時間的動態 + 試轉的轉向（拖進度條照樣看得到每一格）
   const pr = D.ui.probe, probing = !D.ui.playing && D.data.p3d?.enabled && pr && (pr.abs || pr.yaw || pr.pitch);
-  const animate = !rest && !probing;
+  const animate = !rest;
   D.ui.mode = animate ? 'preview' : 'edit';   // 舊的判斷：'edit' = 靜止姿勢
   const t = D.ui.frame;
   const G = animate ? Model.globalAffine(D.data, t) : I;
@@ -1410,7 +1411,7 @@ function draw() {
     overlaySel = D.ui.simpleRange && ids.length ? { multi: new Set(ids), color: '#e9557c' } : null;
   }
   // 暫停時「試轉」：固定一個轉向姿勢，只套用立體（不含動態）
-  if (probing) P3D.setProbe(pr);
+  if (probing) P3D.setProbe(pr, animate);
   const posed = animate || !!probing;
   meshOverlays = posed ? overlayPlan(s) : [];
   sceneItems = null;

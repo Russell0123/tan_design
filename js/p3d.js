@@ -55,8 +55,9 @@ const P3D = (() => {
 
   // 驅動器：轉向 / 俯仰角（弧度），曲線與整體擺動相同（往復 + 緩動），各自的次數與相位
   // 編輯時的「試轉」：固定一個轉向姿勢預覽（不播放、不含動態）
-  let probe = null;
-  const setProbe = p => { probe = p; };
+  // 試轉：固定一個轉向；keep = 保留動態（暫停在某個時間時試轉，只換掉轉向）
+  let probe = null, probeKeep = false;
+  const setProbe = (p, keep = false) => { probe = p; probeKeep = !!(p && keep); };
   function driver(data, t) {
     const S = data.p3d;
     if (!S || !S.enabled) return null;
@@ -205,5 +206,5 @@ const P3D = (() => {
   }
 
   const lagOf = n => (n.p3d && n.p3d.lag) || 0;
-  return { applyTurn, lagOf, faceOfNode, HEAD_REL, BODY, typeDepth, DEFAULT, setProbe, get probe() { return probe; }, faceAncestor, settings, nodeOf, nodeDefaults, driver, depthOf, parentDepth, offset, faceMap, faceNorm, faceFromBounds, has3d, depthByOrder, setMaps, depthMap };
+  return { applyTurn, lagOf, faceOfNode, HEAD_REL, BODY, typeDepth, DEFAULT, setProbe, get probe() { return probe; }, get probeOnly() { return !!probe && !probeKeep; }, faceAncestor, settings, nodeOf, nodeDefaults, driver, depthOf, parentDepth, offset, faceMap, faceNorm, faceFromBounds, has3d, depthByOrder, setMaps, depthMap };
 })();

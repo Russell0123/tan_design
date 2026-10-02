@@ -518,7 +518,7 @@ const Model = (() => {
   // 參數的關鍵影格：靜止值 + 差量（單獨關閉的參數不疊加）
   function effT(data, n, t) {
     const E0 = eff(n.params);
-    if (P3D.probe || !n.keys) return E0;
+    if (P3D.probeOnly || !n.keys) return E0;
     let E = null;
     for (const tr in n.keys) {
       if (!tr.startsWith('p.') || !n.keys[tr].length) continue;
@@ -551,14 +551,14 @@ const Model = (() => {
   const hasKeys = n => !!n.keys && Object.values(n.keys).some(k => k && k.length);
 
   function makeDeformer(data, n, t, ctx, depth) {
-    const motion = P3D.probe ? null : makeMotion(data, n, t, ctx, depth);
+    const motion = P3D.probeOnly ? null : makeMotion(data, n, t, ctx, depth);
     const t3 = t - (delayOf(n) + P3D.lagOf(n)) * unitOf(data);   // 立體轉向：再加上這個部位的落後（軀幹、腿比頭晚一點轉）
     const o3 = P3D.offset(data, n, t3, ctx.drv(t3));
-    const keyed = !P3D.probe && hasKeys(n);
+    const keyed = !P3D.probeOnly && hasKeys(n);
     const kx = keyed ? keyVal(data, n, 'tx', t) : 0, ky = keyed ? keyVal(data, n, 'ty', t) : 0, kf = keyed ? keyVal(data, n, 'flip', t) : 0;
     const ksc = keyed ? keyVal(data, n, 'sc', t) : 1, kr = keyed ? keyVal(data, n, 'rot', t) : 0, ksx = keyed ? keyVal(data, n, 'sx', t) * ksc : 1, ksy = keyed ? keyVal(data, n, 'sy', t) * ksc : 1;
     const kxf = kr || ksx !== 1 || ksy !== 1;
-    const PF = eff(n.params), flipDeg = kf + (!P3D.probe && n.enabled && PF.flipFreq ? 360 * PF.flipFreq * localT(data, n, t) / master(data) : 0);
+    const PF = eff(n.params), flipDeg = kf + (!P3D.probeOnly && n.enabled && PF.flipFreq ? 360 * PF.flipFreq * localT(data, n, t) / master(data) : 0);
     if (!o3 && !kx && !ky && !flipDeg && !kxf) return motion;
     const own = pivotOf(n), piv = own || root3dAxis(data);
     // 關鍵影格的旋轉 / 縮放 / 翻轉軸：部位的支點；沒有支點的圖層用建立影格時記下的中心
