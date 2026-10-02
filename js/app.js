@@ -749,7 +749,7 @@ function updateUndo() {
 
 // ---------- 分頁 ----------
 // 窄螢幕（手機）：開任何檔案都先用簡易模式
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 const isNarrow = () => matchMedia('(max-width: 760px)').matches;
 // 閉眼公版（assets/blink_closed.png）：載入後讓眨眼貼圖重算
 { const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0); Blink.setTemplate(c); }; im.src = typeof BLINK_TPL_SRC === 'string' ? BLINK_TPL_SRC : 'assets/blink_closed.png'; }
@@ -788,8 +788,8 @@ function renderTabs() {
     });
     bar.append(tab);
   }
-  bar.append(el('label', { class: 'tb icon', title: '開啟圖片或 PSD（新分頁）', style: 'margin:0 0 2px 4px' }, ico('plus'),
-    el('input', { type: 'file', accept: OPEN_ACCEPT, multiple: 'multiple', hidden: 'hidden', onchange: e => { openFiles([...e.target.files]); e.target.value = ''; } })));
+  const plus = el('button', { class: 'tb icon', title: '新增檔案（完整模式 / 快速建立）', style: 'margin:0 0 2px 4px', onclick: () => newFileMenu(plus) }, ico('plus'));
+  bar.append(plus);
 }
 
 // ---------- 滴管 ----------
@@ -1133,7 +1133,7 @@ function tick(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (!exporting) {
-    if (D && D.ui.playing && D.ui.mode === 'preview') {
+    if (D && D.ui.playing && !restPose()) {
       D.ui.frame = Anim.mod(D.ui.frame + dt * D.data.timeline.fps * speed, total());
       updatePlaybar();
     }
@@ -1240,6 +1240,7 @@ function drawScene(t, animate, M, cw, ch, overlaySel) {
     for (const sl of slotsFor(owner, dr, t, animate, pos)) list.push({ dr, pos: sl.pos, slot: sl.slot, z: z + sl.dz, a: a * sl.k });
   }
   list.sort((p, q) => p.z - q.z);
+  sceneItems = list;
   // 整體外框：沿著角色實際的邊緣（合成後的 alpha），不是遮罩
   const OL = D.data.outline, useOL = !!(OL && OL.on && OL.width > 0);
   if (useOL) renderer.beginLayer();
@@ -1256,6 +1257,26 @@ function drawScene(t, animate, M, cw, ch, overlaySel) {
     } else renderer.draw(it.dr.gl, it.pos, M, cw, ch, it.slot, it.a, blend ? { blend } : null);
   }
   if (useOL) renderer.endLayer(rgbOf(OL.color || '#ffffff'), OL.width * Math.hypot(M[0], M[1]) * renderer.canvas.width / cw);
+  // 有姿態時的編輯疊圖（深度圖、遮罩、選取範圍、繪圖中）：換算到每個網格的貼圖座標，畫在變形後的網格上，跟著動
+  for (const ov of meshOverlays) {
+    const S = ov.n ? Model.descendants(D.data, ov.n.id) : null, color = ov.color ? rgbOf(ov.color) : null;
+    for (const [dr, pos] of posOf) {
+      if (ov.rel && !ov.rel(dr)) continue;
+      const w = dr.wbuf, nv = dr.mesh.vertexCount;
+      let any = !S;
+      for (let v = 0; v < nv; v++) {
+        if (!S) { w[v] = 1; continue; }
+        let s2 = 0;
+        for (let k = 0; k < K; k++) { const ww = dr.wt[v * K + k]; if (ww && S.has(dr.partIds[dr.idx[v * K + k]])) s2 += ww; }
+        w[v] = Math.min(1, s2 * 4); if (s2 > 0.01) any = true;   // 有被這個部位帶到就顯示（圖本身決定濃淡）
+      }
+      if (!any) continue;
+      const tex = meshTexFor(dr, ov.name, ov.src, ov.key, ov.T);
+      if (!tex) continue;
+      if (color) renderer.drawWeights(dr.gl, pos, w, M, cw, ch, color, ov.alpha, tex);
+      else renderer.draw({ ...dr.gl, tex: [tex] }, pos, M, cw, ch, 0, ov.alpha);
+    }
+  }
   // 範圍預覽（依頂點權重著色）
   if (overlaySel) {
     const S = overlaySel.multi || Model.descendants(D.data, overlaySel.id);
@@ -1355,7 +1376,7 @@ let lastDraw = null;
 const tlPivotCache = new Map();
 const ROT_R = 46;   // 旋轉把手與支點的距離（螢幕 px）
 function tlHandle() {
-  if (!timelineOn || !D || D.ui.mode !== 'preview' || !lastDraw) return null;
+  if (!timelineOn || !D || !lastDraw || !lastDraw.animate) return null;
   const n = sel();
   if (!n || n.type === 'root') return null;
   let piv = n.pins[0] || n.keyPivot;
@@ -1374,21 +1395,28 @@ function draw() {
   octx.setTransform(1, 0, 0, 1, 0, 0);
   octx.clearRect(0, 0, octx.canvas.width, octx.canvas.height);
   if (!D || !D.data.width) return;
-  const animate = D.ui.mode === 'preview';
+  // 只有播放 / 暫停：暫停在任何時間都能編輯；只有把手定義在靜止位置的工具（變形、裁切、快速建模…）會顯示靜止姿勢
+  const rest = restPose();
+  const pr = D.ui.probe, probing = !D.ui.playing && D.data.p3d?.enabled && pr && (pr.abs || pr.yaw || pr.pitch);
+  const animate = !rest && !probing;
+  D.ui.mode = animate ? 'preview' : 'edit';   // 舊的判斷：'edit' = 靜止姿勢
   const t = D.ui.frame;
   const G = animate ? Model.globalAffine(D.data, t) : I;
   const M = aMul(viewAffine(), G);
   const s = sel();
-  let overlaySel = showRegion && s && s.type !== 'root' && !stroke && !(EDIT_TOOLS.has(tool.name) && tool.target === 'depth') && !rigEditHost() ? s : null;
+  let overlaySel = showRegion && curITab() === 'range' && s && s.type !== 'root' && !stroke && !EDIT_TOOLS.has(tool.name) && !rigEditHost() ? s : null;
   if (D.ui.simple) {
     const g = simpleGroups().find(x => x.key === D.ui.sptab), ids = g ? g.nodes.map(n => n.id) : D.data.nodes.filter(n => isPart(n) && n.type !== 'group').map(n => n.id);
     overlaySel = D.ui.simpleRange && ids.length ? { multi: new Set(ids), color: '#e9557c' } : null;
   }
-  // 編輯中「試轉」：固定一個轉向姿勢，只套用立體（不播放、不含動態）
-  const pr = D.ui.probe, probing = !animate && D.data.p3d?.enabled && pr && (pr.abs || pr.yaw || pr.pitch);
+  // 暫停時「試轉」：固定一個轉向姿勢，只套用立體（不含動態）
   if (probing) P3D.setProbe(pr);
-  const evals = drawScene(t, animate || !!probing, M, view.cw, view.ch, overlaySel);
-  lastDraw = { evals, M, t };
+  const posed = animate || !!probing;
+  meshOverlays = posed ? overlayPlan(s) : [];
+  sceneItems = null;
+  const evals = drawScene(t, posed, M, view.cw, view.ch, overlaySel);
+  meshOverlays = [];   // 只給這一次的畫面用（輸出等其他 drawScene 不畫）
+  lastDraw = { evals, M, G, t, posed, animate, items: sceneItems, id: ++drawId };
   // 除錯疊圖用：目前姿態下的頭部骨架
   P3D.setProbe(null);
   // 對齊中的新圖（半透明）
@@ -1397,10 +1425,127 @@ function draw() {
     renderer.draw(dr.gl, dr.mesh.rest, aMul(M, layerAffine(al, a)), view.cw, view.ch, 0, al.opacity);
   }
   if (showMesh) for (const dr of D.cache.drawables) drawMesh(dr, animate || probing ? dr.pos : dr.mesh.rest, M);
-  if (!D.ui.simple) drawOverlay(M, evals, animate);   // 簡易模式：不顯示錨點、範圍等編輯用的東西
+  if (!D.ui.simple) drawOverlay(M, evals, posed);   // 簡易模式：不顯示錨點、範圍等編輯用的東西
   else simpleOverlay(M, evals);
 }
 
+// 編輯用的疊圖：依「屬性」區塊的分頁決定（範圍 = 遮罩、深度 = 深度圖），加上繪圖中、選取範圍
+//   { name, src（文件座標的圖，或用 T 換算）, T, key（改了才重做貼圖）, color（單色，null = 原色）, alpha, n（只顯示這個部位帶得到的地方）, rel（只畫在這些網格） }
+let meshOverlays = [], sceneItems = null, drawId = 0;
+function overlayPlan(s) {
+  const out = [], tab = curITab(), editTool = EDIT_TOOLS.has(tool.name);
+  if (s && tab === 'depth' && (showRegion || editTool)) {
+    const P = P3D.nodeOf(s), obj = P.mapId && D.masks.get(P.mapId);
+    if (stroke && stroke.kind === 'depth') out.push({ name: 'depth', src: stroke.canvas, key: 'stroke:' + (stroke.ver || 0), color: DEPTH_COLOR, alpha: 0.85, n: s });
+    else if (obj) out.push({ name: 'depth', src: maskCanvas(obj, DEPTH_COLOR), key: P.mapId + ':' + obj.v, color: DEPTH_COLOR, alpha: 0.75, n: s });
+  }
+  if (s && isPart(s) && tab === 'range' && (showRegion || editTool)) {
+    const obj = s.region.mode === 'mask' && s.region.maskId && D.masks.get(s.region.maskId), host = Model.imageOf(D.data, s);
+    const rel = dr => !host || dr.id === host.id || dr.id === s.id;
+    if (stroke && stroke.kind === 'mask') out.push({ name: 'mask', src: stroke.canvas, key: 'stroke:' + (stroke.ver || 0), color: colorOf(s), alpha: 0.5, rel });
+    else if (obj && editTool) out.push({ name: 'mask', src: maskCanvas(obj, colorOf(s)), key: s.region.maskId + ':' + obj.v, color: colorOf(s), alpha: 0.28, rel });
+  }
+  if (stroke && stroke.kind === 'paint') out.push({ name: 'paint', src: stroke.canvas, T: stroke.T, key: 'stroke:' + (stroke.ver || 0), color: null, alpha: 1, rel: dr => dr.id === stroke.node.id });
+  if (selArea) out.push({ name: 'sel', src: maskCanvas(selArea, '#22d3ee'), key: 'sel:' + selArea.v, color: '#22d3ee', alpha: 0.35 });
+  return out;
+}
+// 文件座標的圖（src 經 T 換到文件座標）→ 這個網格的貼圖座標（快取：每個網格每種疊圖一張，key 變了才重做）
+const meshTexCache = new WeakMap();
+function meshAffine(dr) {
+  if (dr._uvA !== undefined) return dr._uvA;
+  const rest = dr.mesh.rest, uv = dr.mesh.uv, n = dr.mesh.vertexCount;
+  let A = null;
+  // 網格的 uv → 文件座標（圖層的仿射）：找三個不共線的頂點解出來
+  for (let j = 1; j < n && !A; j++) for (let k = j + 1; k < Math.min(n, j + 60) && !A; k++) {
+    const u1 = uv[j * 2] - uv[0], v1 = uv[j * 2 + 1] - uv[1], u2 = uv[k * 2] - uv[0], v2 = uv[k * 2 + 1] - uv[1], det = u1 * v2 - u2 * v1;
+    if (Math.abs(det) < 1e-4) continue;
+    const x1 = rest[j * 2] - rest[0], y1 = rest[j * 2 + 1] - rest[1], x2 = rest[k * 2] - rest[0], y2 = rest[k * 2 + 1] - rest[1];
+    const a = (x1 * v2 - x2 * v1) / det, b = (x2 * u1 - x1 * u2) / det, c = (y1 * v2 - y2 * v1) / det, d = (y2 * u1 - y1 * u2) / det;
+    A = [a, c, b, d, rest[0] - a * uv[0] - b * uv[1], rest[1] - c * uv[0] - d * uv[1]];   // doc = A · (u, v)
+  }
+  dr._uvA = A;
+  return A;
+}
+function meshTexFor(dr, name, src, key, T) {
+  let m = meshTexCache.get(dr);
+  if (!m) meshTexCache.set(dr, m = new Map());
+  const c0 = m.get(name);
+  if (c0 && c0.key === key) return c0.tex;
+  const A = meshAffine(dr);
+  if (!A) return null;
+  const W = Math.max(8, Math.min(2048, Math.round(Math.hypot(A[0], A[1])))), H = Math.max(8, Math.min(2048, Math.round(Math.hypot(A[2], A[3]))));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d'), Ti = aMul(aInv([A[0] / W, A[1] / W, A[2] / H, A[3] / H, A[4], A[5]]), T || I);
+  g.setTransform(Ti[0], Ti[1], Ti[2], Ti[3], Ti[4], Ti[5]);
+  g.drawImage(src, 0, 0);
+  const tex = renderer.texture(cv, c0 && c0.tex);
+  m.set(name, { key, tex });
+  return tex;
+}
+// 畫面上的位置（目前姿態，文件座標）→ 靜止位置：先找畫在那裡的網格（最上面的）反推，找不到就用部位的變形反推
+//   n：只看跟這個部位 / 圖層有關的網格；L：用哪一幀的姿態（拖曳時固定用按下那一幀）
+function restOf(x, y, n, L = lastDraw) {
+  if (!L || !L.posed) return [x, y];
+  if (L.G && L.G !== I) [x, y] = aApply(aInv(L.G), x, y);
+  const m = meshRestAt(L, x, y, n);
+  if (m) return m;
+  const e = n && L.evals && L.evals.get(n.id);
+  if (!e) return [x, y];
+  let px = x, py = y;
+  for (let k = 0; k < 10; k++) { const o = Model.applyChain(e, px, py); px += x - o[0]; py += y - o[1]; }
+  return [px, py];
+}
+function relatedTo(n) {
+  if (!n || n.type === 'root') return null;
+  if (n.type === 'image') return dr => dr.id === n.id;
+  const S = Model.descendants(D.data, n.id), host = Model.imageOf(D.data, n);
+  return dr => dr.id === n.id || (host && dr.id === host.id) || dr.partIds.some(id => S.has(id));
+}
+function meshRestAt(L, x, y, n) {
+  const items = L.items;
+  if (!items) return null;
+  const rel = relatedTo(n);
+  for (let i = items.length - 1; i >= 0; i--) {
+    const { dr, pos } = items[i];
+    if (rel && !rel(dr)) continue;
+    // 外框先排除
+    let bb = dr._bb;
+    if (!bb || bb.id !== L.id || bb.pos !== pos) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let v = 0; v < dr.mesh.vertexCount; v++) { const px = pos[v * 2], py = pos[v * 2 + 1]; if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; }
+      bb = dr._bb = { id: L.id, pos, x0, y0, x1, y1 };
+    }
+    if (x < bb.x0 || x > bb.x1 || y < bb.y0 || y > bb.y1) continue;
+    const idx = dr.mesh.idx, R = dr.mesh.rest;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t] * 2, b = idx[t + 1] * 2, c = idx[t + 2] * 2;
+      const ax = pos[a], ay = pos[a + 1], bx = pos[b], by = pos[b + 1], cx = pos[c], cy = pos[c + 1];
+      if (x < Math.min(ax, bx, cx) || x > Math.max(ax, bx, cx) || y < Math.min(ay, by, cy) || y > Math.max(ay, by, cy)) continue;
+      const det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+      if (Math.abs(det) < 1e-9) continue;
+      const l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / det, l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / det, l3 = 1 - l1 - l2;
+      if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
+      return [R[a] * l1 + R[b] * l2 + R[c] * l3, R[a + 1] * l1 + R[b + 1] * l2 + R[c + 1] * l3];
+    }
+  }
+  return null;
+}
+// 形狀換成點（有姿態時每一點各自反推回靜止位置，直線也會跟著彎）
+function shapePoints(a, b, ellipse, square) {
+  let w = b[0] - a[0], h = b[1] - a[1];
+  if (square) { const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * m; h = Math.sign(h || 1) * m; }
+  const pts = [];
+  if (ellipse) for (let i = 0; i < 72; i++) { const t = i / 72 * TAU; pts.push([a[0] + w / 2 + Math.cos(t) * w / 2, a[1] + h / 2 + Math.sin(t) * h / 2]); }
+  else for (const [p, q] of [[[0, 0], [1, 0]], [[1, 0], [1, 1]], [[1, 1], [0, 1]], [[0, 1], [0, 0]]]) for (let i = 0; i < 16; i++) { const f = i / 16; pts.push([a[0] + w * (p[0] + (q[0] - p[0]) * f), a[1] + h * (p[1] + (q[1] - p[1]) * f)]); }
+  return pts;
+}
+function restPath(pts, n) {
+  // 長的直線先切細，反推後才會沿著變形彎曲
+  const dense = [];
+  pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length], L = Math.hypot(q[0] - p[0], q[1] - p[1]), k = Math.max(1, Math.ceil(L / 12)); for (let j = 0; j < k; j++) dense.push([p[0] + (q[0] - p[0]) * j / k, p[1] + (q[1] - p[1]) * j / k]); });
+  const rp = dense.map(([x, y]) => restOf(x, y, n));
+  return g => { g.beginPath(); rp.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); };
+}
 function drawMesh(dr, pos, M) {
   const g = octx;
   g.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
@@ -1430,6 +1575,15 @@ function maskCanvas(obj, color) {
 function drawOverlay(M, evals, animate) {
   const g = octx, V = viewAffine(), dpr = view.dpr;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 調筆刷大小時：在工具列下方畫出實際大小的筆刷（照目前的縮放）
+  if (brushPeek && performance.now() < brushPeek.until) {
+    const r = Math.max(1, (tool[brushPeek.key] || 1) / 2 * V[0]), st = $('#stage').getBoundingClientRect();
+    const cx = Math.max(r + 6, Math.min(view.cw - r - 6, brushPeek.x - st.left)), cy = r + 14;
+    g.save(); g.beginPath(); g.arc(cx, cy, r, 0, TAU);
+    g.fillStyle = 'rgba(255,255,255,.08)'; g.fill();
+    g.lineWidth = 2.5; g.strokeStyle = 'rgba(0,0,0,.6)'; g.stroke();
+    g.lineWidth = 1.2; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+  }
   // 畫布範圍：外面淡淡的陰影
   if (!(D.ui.crop && D.ui.crop.canvas)) {
     const [x0, y0] = aApply(V, 0, 0), [x1, y1] = aApply(V, D.data.width, D.data.height);
@@ -1438,17 +1592,17 @@ function drawOverlay(M, evals, animate) {
     g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 1; g.strokeRect(x0 - 0.5, y0 - 0.5, x1 - x0 + 1, y1 - y0 + 1);
   }
   const s = sel();
-  const editing = !animate;
+  const editing = !animate;   // animate = 有姿態（動態中的某個時間 / 試轉）；editing = 靜止姿勢
+  const tab = curITab(), editTool = EDIT_TOOLS.has(tool.name);
 
-  // 深度圖（深度筆使用中）
-  const editTgt = EDIT_TOOLS.has(tool.name) ? tool.target : null;
-  if (editing && s && editTgt === 'depth') {
+  // 深度圖（深度分頁）：靜止姿勢時直接畫；有姿態時畫在網格上（drawScene）
+  if (editing && s && tab === 'depth' && (showRegion || editTool)) {
     const P = P3D.nodeOf(s), obj = P.mapId && D.masks.get(P.mapId);
     const c = stroke && stroke.kind === 'depth' ? stroke.canvas : obj ? maskCanvas(obj, DEPTH_COLOR) : null;
     if (c) { g.save(); g.globalAlpha = stroke ? 0.85 : 0.75; g.setTransform(dpr * V[0], 0, 0, dpr * V[3], dpr * V[4], dpr * V[5]); g.drawImage(c, 0, 0); g.restore(); }
   }
-  // 遮罩核心（編輯時）
-  if (editing && isPart(s) && editTgt !== 'depth' && (showRegion && !(rigShow && rigEditHost()) || editTgt === 'mask')) {
+  // 遮罩核心（範圍分頁）
+  if (editing && isPart(s) && tab === 'range' && (showRegion && !(rigShow && rigEditHost()) || editTool)) {
     const obj = s.region.mode === 'mask' && s.region.maskId && D.masks.get(s.region.maskId);
     const c = stroke && stroke.kind === 'mask' ? stroke.canvas : obj ? maskCanvas(obj, colorOf(s)) : null;
     if (c) {
@@ -1464,21 +1618,21 @@ function drawOverlay(M, evals, animate) {
       g.globalAlpha = 1;
     }
   }
-  // 像素繪圖進行中
-  if (stroke && stroke.kind === 'paint') {
+  // 像素繪圖進行中（有姿態時畫在網格上）
+  if (stroke && stroke.kind === 'paint' && editing) {
     const T = aMul(V, stroke.T);
     g.save(); g.setTransform(dpr * T[0], dpr * T[1], dpr * T[2], dpr * T[3], dpr * T[4], dpr * T[5]);
     g.drawImage(stroke.canvas, 0, 0); g.restore();
   }
 
   // 錨點：選取部位（含子部位）清楚顯示，其他淡顯
-  if ((showPins || editing) && !(rigShow && rigEditHost())) {   // 編輯頭部定位時隱藏錨點，避免和定位點混在一起
+  if ((showPins || tool.name === 'pin') && !(rigShow && rigEditHost())) {   // 編輯頭部定位時隱藏錨點，避免和定位點混在一起
     const focus = s ? Model.descendants(D.data, s.id) : new Set();
     for (const n of D.data.nodes) {
       if (!n.pins.length) continue;
       const inFocus = focus.has(n.id);
-      if (n.type === 'root') { if (s && s.type === 'root' && editing) drawRootPivot(g, aApply(M, n.pins[0].x, n.pins[0].y)); continue; }
-      if (!inFocus && (animate || !showPins)) continue;
+      if (n.type === 'root') { if (s && s.type === 'root') drawRootPivot(g, aApply(M, n.pins[0].x, n.pins[0].y)); continue; }
+      if (!inFocus && !showPins) continue;
       const e = evals.get(n.id);
       const pts = n.pins.map(p => {
         const o = animate ? Model.applyChain(e, p.x, p.y) : [p.x, p.y];
@@ -1499,7 +1653,7 @@ function drawOverlay(M, evals, animate) {
         g.fillStyle = fixed ? '#ef4444' : '#38bdf8'; g.fill();
         g.lineWidth = D.ui.selPin === q.p.id ? 2.5 : 1.5;
         g.strokeStyle = D.ui.selPin === q.p.id ? '#fff' : 'rgba(0,0,0,.6)'; g.stroke();
-        if (main && editing && i > 0) { g.fillStyle = '#fff'; g.font = '600 10px system-ui'; g.fillText(String(i), q.x + 7, q.y - 6); }
+        if (main && i > 0) { g.fillStyle = '#fff'; g.font = '600 10px system-ui'; g.fillText(String(i), q.x + 7, q.y - 6); }
       });
     }
     g.globalAlpha = 1;
@@ -1531,7 +1685,7 @@ function drawOverlay(M, evals, animate) {
     g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(rl, rx + 10, ry + 4); g.fillStyle = '#fff'; g.fillText(rl, rx + 10, ry + 4);
   }
   // 選取範圍（青色）
-  if (selArea && editing) {
+  if (selArea && editing) {   // 有姿態時畫在網格上
     g.save(); g.globalAlpha = 0.35; g.setTransform(dpr * V[0], 0, 0, dpr * V[3], dpr * V[4], dpr * V[5]); g.drawImage(maskCanvas(selArea, '#22d3ee'), 0, 0); g.restore();
   }
   // 漸層：起點（實心點）→ 終點（箭頭）
@@ -1568,7 +1722,7 @@ function drawOverlay(M, evals, animate) {
     g.beginPath(); g.arc(f[0], f[1], snap ? 8 : 5, 0, TAU); g.fillStyle = snap ? '#4ade80' : '#fff'; g.fill();
     if (snap) { g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
   }
-  if (cursor && editing && tool.name === 'brush') {
+  if (cursor && tool.name === 'brush') {
     const tt = eyePick ? 'mask' : tool.target;
     const size = tt === 'mask' ? tool.brush : tt === 'depth' ? tool.depthSize : tool.paintSize * (xformTarget()?.p.scale ?? 1);
     g.beginPath(); g.arc(cursor.x, cursor.y, Math.max(2, size * V[0] / 2), 0, TAU);
@@ -1776,14 +1930,16 @@ function drawCurve() {
 }
 
 // ---------- 模式與播放 ----------
+// 不再分編輯 / 預覽：'edit' = 暫停（停在目前的時間，可以直接編輯）；'preview' = 不改播放狀態
 function setMode(m) {
   if (!D) return;
-  D.ui.mode = m;
-  D.ui.playing = m === 'preview';
-  if (m === 'edit') D.ui.frame = 0;
-  lasso = null;
-  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-  updatePlaybar(); renderStatus();
+  if (m === 'edit' && D.ui.playing) { D.ui.playing = false; updatePlaybar(); }
+  renderStatus();
+}
+// 一定要用靜止姿勢的編輯：把手定義在靜止位置（變形、裁切、對齊、範本、快速建模、圈眼睛、臉部精細、頭部定位）
+function restPose() {
+  if (!D) return false;
+  return tool.name === 'transform' || tool.name === 'crop' || !!D.ui.fit || !!D.ui.align || !!wiz || !!eyePick || !!faceSel() || !!rigEditHost();
 }
 function updatePlaybar() {
   if (!D) return;
@@ -1797,19 +1953,17 @@ function updatePlaybar() {
 }
 function togglePlay() {
   if (!D) return;
-  if (D.ui.mode !== 'preview') { setMode('preview'); return; }
   D.ui.playing = !D.ui.playing;
   updatePlaybar();
 }
 function stepFrame(d) {
   if (!D) return;
-  if (D.ui.mode !== 'preview') setMode('preview');
   D.ui.playing = false;
   D.ui.frame = Anim.mod(Math.round(D.ui.frame) + d, total());
   updatePlaybar();
 }
 // 調整動作參數時自動切到預覽（使用編輯工具中除外）
-function liveChanged() { if (D && D.ui.mode === 'edit' && tool.name === 'select' && !D.ui.fit && !D.ui.align) setMode('preview'); }
+function liveChanged() { /* 暫停時畫面就是目前時間的樣子，不用切換 */ }
 
 // ---------- 工具 ----------
 // 編輯工具共用：先選「編輯目標」（圖像 / 遮罩 / 深度），筆刷、形狀、漸層、魔術棒都作用在目標上
@@ -1843,7 +1997,7 @@ const KEY_DEFS = [
   ['brushDown', '筆刷', '筆刷縮小', '['],
   ['brushUp', '筆刷', '筆刷放大', ']'],
   ['maskMode', '筆刷', '加 / 減 切換', 'X'],
-  ['editTarget', '筆刷', '切換編輯目標：圖像 / 遮罩 / 深度', 'D'],
+  ['editTarget', '筆刷', '切換屬性分頁：範圍 / 圖像 / 深度（編輯工具的作用對象）', 'D'],
 ];
 // 固定的操作（不能改，列在說明與快捷鍵設定裡）
 const FIXED_KEYS = [
@@ -1888,7 +2042,11 @@ function updateKeyTitles() {
   set('#btnUndo', '復原' + keyHint('undo'));
   set('#btnRedo', '重做' + keyHint('redo'));
   set('#btnExport', '輸出動畫' + keyHint('export'));
-  const o = $('#fileOpen'); if (o && o.parentElement) o.parentElement.title = '開啟圖片 / PSD / 專案（新分頁）' + keyHint('open');
+  const o = $('#fileOpen');
+  if (o && o.parentElement) {
+    const lab = o.parentElement; lab.title = '新增檔案（完整模式 / 快速建立）' + keyHint('open');
+    if (!lab._menu) { lab._menu = true; lab.addEventListener('click', e => { if (e.target === o) return; e.preventDefault(); newFileMenu(lab); }); }
+  }
   if (D) renderTools();
 }
 loadKeys();
@@ -1898,27 +2056,22 @@ function targetUsable(t) {
   if (!D) return false;
   const n = sel();
   if (eyePick) return t === 'mask';
+  if (TAB_TGT[curITab()] !== t) return false;   // 作用對象 = 屬性區塊選的分頁
   if (t === 'mask') return isPart(n) && n.type !== 'group';
   if (t === 'image') return n?.type === 'image';
-  if (t === 'depth') return !!n && !['root', 'group'].includes(n.type);
+  if (t === 'depth') return !!n && !['root', 'group'].includes(n.type) && !!P3D.settings(D.data).enabled;   // 立體沒啟用：深度不能畫
   return false;
 }
-// 目前的目標不能用時，換成這個選取能用的（部位 → 遮罩、圖層 → 圖像、其他 → 深度）
+// 作用對象跟著分頁
 function ensureTarget() {
-  if (targetUsable(tool.target)) return true;
-  const t = ['mask', 'image', 'depth'].find(targetUsable);
-  if (t) tool.target = t;
-  return !!t;
+  const tg = TAB_TGT[curITab()];
+  if (tg) tool.target = tg;
+  return eyePick ? true : targetUsable(tool.target);
 }
-const toolUsable = name => EDIT_TOOLS.has(name) ? !!D && TARGETS.some(([t]) => targetUsable(t))
+const toolUsable = name => EDIT_TOOLS.has(name) ? !!D && (!!eyePick || TARGETS.some(([t]) => targetUsable(t)))
     : name === 'crop' ? !!D
   : name !== 'transform' || !!D && (sel()?.type === 'image' || !!D.ui.align || sel()?.type === 'group' || !!lgById(D.ui.selLg));
-function setTarget(t) {
-  if (!targetUsable(t)) return;
-  tool.target = t;
-  if (t === 'depth' && D && !P3D.settings(D.data).enabled) { P3D.settings(D.data).enabled = true; commit(); renderAll(); toast('編輯深度：已一併啟用立體', 'info'); }
-  renderTools(); renderToolDetail(); renderStatus();
-}
+function setTarget(t) { if (D && TGT_TAB[t]) setITab(TGT_TAB[t]); }
 function setTool(name) {
   if (LEGACY_TOOL[name]) { const [nm, tg] = LEGACY_TOOL[name]; if (name === 'lasso') tool.shapeKind = 'poly'; if (targetUsable(tg)) tool.target = tg; name = nm; }
   if (!toolUsable(name)) return;
@@ -1928,7 +2081,7 @@ function setTool(name) {
   if (name === 'crop' && D) startCrop();
   lasso = null;
   if (tool.stripHidden) { tool.stripHidden = false; renderStrip(); resize(); }
-  if (D && name !== 'select' && D.ui.mode !== 'edit') setMode('edit');
+  if (D && name !== 'select' && D.ui.playing) { D.ui.playing = false; updatePlaybar(); }   // 拿工具 = 暫停在目前的時間
   renderTools(); renderToolDetail(); renderStatus();
 }
 function renderTools() {
@@ -1937,9 +2090,6 @@ function renderTools() {
   if (!toolUsable(tool.name)) { if (tool.name === 'crop' && D && D.ui.crop) endCrop(true); tool.name = 'select'; lasso = null; renderStatus(); }
   if (EDIT_TOOLS.has(tool.name)) ensureTarget();   // 換了選取：目標跟著換成能用的
   for (const [name, icon, title0] of TOOLS) { const title = title0.replace(/\s*\(.\)$/, '') + keyHint('tool.' + name); box.append(el('button', { class: 'tb icon' + (tool.name === name ? ' on' : ''), title: toolUsable(name) ? title : title + (EDIT_TOOLS.has(name) ? '（先選取部位或圖層）' : '（先選取影像圖層）'), disabled: toolUsable(name) ? null : 'disabled', onclick: () => setTool(name) }, ico(icon))); }
-  // 編輯目標（編輯工具共用）
-  if (EDIT_TOOLS.has(tool.name)) box.append(el('div', { class: 'tgtseg', title: '編輯目標' + keyHint('editTarget') },
-    ...TARGETS.map(([t, label]) => el('button', { class: tool.target === t ? 'on' : '', disabled: targetUsable(t) ? null : 'disabled', title: { image: '圖像：在影像圖層上畫', mask: '遮罩：部位的範圍', depth: '深度：有塗 = 淺（靠近）、沒塗 = 深' }[t], onclick: () => setTarget(t) }, label))));
   $('#toolName').textContent = (TOOLS.find(t => t[0] === tool.name) || [])[2]?.replace(/\s*\(.\)$/, '') || '';
 }
 function renderStatus() {
@@ -1970,11 +2120,16 @@ function alphaAtDoc(x, y) {
   }
   return false;
 }
+// 錨點在畫面上的位置：有姿態時跟著變形（和畫出來的一樣）
+function pinScreen(n, p) {
+  const L = lastDraw, e = L && L.posed && n.type !== 'root' && L.evals && L.evals.get(n.id);
+  const o = e ? Model.applyChain(e, p.x, p.y) : [p.x, p.y];
+  return aApply(L ? L.M : viewAffine(), o[0], o[1]);
+}
 function hitPin(mx, my, only) {
-  const V = viewAffine();
   let best = null, bd = HIT;
   for (const n of only ? [only] : D.data.nodes) for (const p of n.pins) {
-    const [x, y] = aApply(V, p.x, p.y), d = Math.hypot(x - mx, y - my);
+    const [x, y] = pinScreen(n, p), d = Math.hypot(x - mx, y - my);
     if (d < bd) { bd = d; best = { n, p }; }
   }
   return best;
@@ -1983,7 +2138,7 @@ function selectNode(id, toEdit = true) {
   D.ui.sel = id; D.ui.selPin = null; D.ui.selLg = null;
   let n = node(id);
   while (n && n.parent) { const p = node(n.parent); if (p) p.collapsed = false; n = p; }
-  if (toEdit && D.ui.mode !== 'edit' && !timelineOn) setMode('edit');
+  void toEdit;
   renderTree(); renderOrder(); renderRight(); renderStatus();
 }
 
@@ -2082,10 +2237,12 @@ function flushStroke(st, [x0, y0, x1, y1]) {
   const W = st.canvas.width, w = x1 - x0 + 1, h = y1 - y0 + 1, im = st.g.createImageData(w, h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) st.pixel(im.data, (y * w + x) * 4, (y0 + y) * W + x0 + x);
   st.g.putImageData(im, x0, y0);
+  st.ver = (st.ver || 0) + 1;
 }
 // 手感：輕微防手震（位置往目標平滑靠近）、筆觸間距隨筆刷大小，畫面更新合併到每一幀一次
 function strokeTo(x, y, final = false) {
   const st = stroke;
+  if (!st.restXY) [x, y] = restOf(x, y, st.node, st.L);   // 暫停在動態中的姿勢：換回靜止位置
   if (st.kind === 'paint') [x, y] = aApply(st.Tinv, x, y);
   if (st.last && !final) { const k = 0.45; x = st.last[0] + (x - st.last[0]) * k; y = st.last[1] + (y - st.last[1]) * k; }
   const [lx, ly] = st.last || [x, y], dist = Math.hypot(x - lx, y - ly);
@@ -2335,7 +2492,7 @@ function finishLasso() {
   if (eyePick) { const pts = lasso.pts, sub = lasso.mode === 'sub'; lasso = null; eyePickPaint(g => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill(); }, sub); eyePickChanged(); return; }
   const pts = lasso.pts, alt = !!lasso.alt, shift = !!lasso.shift;
   lasso = null;
-  applyShape(g => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); }, alt, shift);
+  applyShape(lastDraw && lastDraw.posed ? restPath(pts, targetNode()) : g => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); }, alt, shift);
 }
 
 function addPinAt(n, x, y) {
@@ -2377,21 +2534,19 @@ function setupPointer() {
     if (!D || D.ui.simple) return;
     if (lasso) { lasso = null; return; }
     const [mx, my] = pos(e);
-    if (tool.name === 'pin' && D.ui.mode === 'edit') {
+    if (tool.name === 'pin') {
       const h = hitPin(mx, my, sel());
       if (h && h.n.type !== 'root') { deletePin(h.n, h.p); return; }
     }
     const [x, y] = toDoc(mx, my);
-    const n = pickAt(D, x, y) || sel();
+    const n = pickAt(D, ...restOf(x, y, null)) || sel();
     if (n) { selectNode(n.id); showMenu(e.clientX, e.clientY, nodeMenu(n)); }
   });
   ov.addEventListener('dblclick', e => {
     if (!D) return;
     if (lasso) return;
-    if (D.ui.mode === 'edit') {
-      const [mx, my] = pos(e), h = hitPin(mx, my, tool.name === 'select' ? null : sel());
-      if (h && h.n.type !== 'root') deletePin(h.n, h.p);
-    }
+    { const [mx, my] = pos(e), h = hitPin(mx, my, tool.name === 'select' ? null : sel());
+      if (h && h.n.type !== 'root') deletePin(h.n, h.p); }
   });
   ov.addEventListener('pointerdown', e => {
     if (!D) return;
@@ -2429,7 +2584,7 @@ function setupPointer() {
       return;
     }
     const n = sel();
-    if (wiz && D.ui.mode === 'edit') {
+    if (wiz) {
       const h = wizHit(mx, my);
       if (h) { drag = { type: 'wiz', h, moved: false }; cap(); return; }
       if (wiz.step && e.pointerType === 'touch') { drag = { type: 'wiztap', sx: mx, sy: my, x0: x, y0: y, x, y }; cap(); return; }
@@ -2439,24 +2594,24 @@ function setupPointer() {
       }
     }
     { const rd = rigPointerDown(mx, my, x, y); if (rd) { drag = rd; cap(); return; } }
-    const F = D.ui.mode === 'edit' && faceSel();
+    const F = faceSel();
     if (F) {
       const V = viewAffine(), h = faceHandles(F).find(([, hx, hy]) => { const q = aApply(V, hx, hy); return Math.hypot(q[0] - mx, q[1] - my) < 9; });
       if (h) { drag = { type: 'face', k: h[0], F, sx: x, sy: y, base: JSON.parse(JSON.stringify(F)) }; cap(); return; }
     }
     if (tool.name === 'select') {
       const h = hitPin(mx, my);
-      if (h && D.ui.mode === 'edit' && h.n.type !== 'root') {
+      if (h && h.n.type !== 'root') {
         if (h.n.id !== D.ui.sel) selectNode(h.n.id);
         D.ui.selPin = h.p.id;
-        drag = { type: 'pin', n: h.n, p: h.p, ox: h.p.x, oy: h.p.y, moved: false }; cap();
+        drag = { type: 'pin', n: h.n, p: h.p, ox: h.p.x, oy: h.p.y, moved: false, L: lastDraw }; holdPlay(); cap();
         return;
       }
-      const p = pickAt(D, x, y);
+      const p = pickAt(D, ...restOf(x, y, null));
       selectNode(p ? p.id : 'root');
       return;
     }
-    if (D.ui.mode !== 'edit') setMode('edit');
+    if (D.ui.playing) { D.ui.playing = false; updatePlaybar(); }   // 編輯 = 停在目前的時間
     if (tool.name === 'crop') { const cd = cropPointerDown(mx, my); if (cd) { drag = cd; cap(); } return; }
     // 群組：變形工具拖曳 = 整組一起移動
     if (tool.name === 'transform' && lgById(D.ui.selLg)) {
@@ -2502,8 +2657,8 @@ function setupPointer() {
         return;
       }
       const h = hitPin(mx, my, n);
-      if (h) { D.ui.selPin = h.p.id; drag = { type: 'pin', n, p: h.p, ox: h.p.x, oy: h.p.y, moved: false }; cap(); return; }
-      addPinAt(n, x, y);
+      if (h) { D.ui.selPin = h.p.id; drag = { type: 'pin', n, p: h.p, ox: h.p.x, oy: h.p.y, moved: false, L: lastDraw }; cap(); return; }
+      addPinAt(n, ...(n.type === 'root' ? [x, y] : restOf(x, y, n)));
       return;
     }
     if (EDIT_TOOLS.has(tool.name)) {
@@ -2522,6 +2677,7 @@ function setupPointer() {
         if (tg === 'image') { const t2 = xformTarget(); if (!t2 || t2.align) { toast('請先選擇一個圖層', 'warn'); return; } tool.paintMode = tool.mode === 'erase' ? 'erase' : 'draw'; stroke = startPaintStroke(t2.n); }
         else if (tg === 'mask') stroke = startMaskStroke(tn, erase);
         else stroke = startDepthStroke(tn, erase);
+        stroke.L = lastDraw;   // 這一筆都用按下時的姿態換回靜止位置
         strokeTo(x, y); drag = { type: 'stroke' }; cap();
         return;
       }
@@ -2541,7 +2697,7 @@ function setupPointer() {
         // 取色來源：選取的影像圖層；部位用它所在的圖層
         const src = n && (n.type === 'image' ? n : Model.imageOf(D.data, n));
         if (!src) { toast('魔術棒要從影像圖層取色：請選取圖層或部位', 'warn'); return; }
-        const a = D.assets.get(src.image.assetId), [lx, ly] = aApply(aInv(layerAffine(src.image, a)), x, y).map(Math.floor);
+        const a = D.assets.get(src.image.assetId), [lx, ly] = aApply(aInv(layerAffine(src.image, a)), ...restOf(x, y, src)).map(Math.floor);
         if (lx < 0 || ly < 0 || lx >= a.w || ly >= a.h) return;
         wandClick(src, lx, ly, e.shiftKey ? 'add' : e.altKey ? 'sub' : 'new');
         return;
@@ -2557,7 +2713,7 @@ function setupPointer() {
     if (!drag) {
       { const th = tlHandle(); if (th && Math.hypot(th.x - mx, th.y - my) < 12) { ov.style.cursor = 'move'; return; } if (th && Math.hypot(th.x - mx, th.y - ROT_R - my) < 10) { ov.style.cursor = 'grab'; return; } }
       const brushy = tool.name === 'brush';
-      ov.style.cursor = spaceDown ? 'grab' : D.ui.mode === 'edit' && hitPin(mx, my, tool.name === 'select' ? null : sel()) ? 'move' : brushy ? 'none' : tool.name === 'select' ? 'default' : 'crosshair';
+      ov.style.cursor = spaceDown ? 'grab' : hitPin(mx, my, tool.name === 'select' ? null : sel()) ? 'move' : brushy ? 'none' : tool.name === 'select' ? 'default' : 'crosshair';
       return;
     }
     if (drag.type === 'pan') { D.ui.panX = drag.px + mx - drag.sx; D.ui.panY = drag.py + my - drag.sy; return; }
@@ -2641,8 +2797,9 @@ function setupPointer() {
       return;
     }
     if (drag.type === 'pin') {
-      drag.p.x = Math.round(Math.max(0, Math.min(D.data.width - 1, x)));
-      drag.p.y = Math.round(Math.max(0, Math.min(D.data.height - 1, y)));
+      const [rx, ry] = drag.n.type === 'root' ? [x, y] : restOf(x, y, drag.n, drag.L);
+      drag.p.x = Math.round(Math.max(0, Math.min(D.data.width - 1, rx)));
+      drag.p.y = Math.round(Math.max(0, Math.min(D.data.height - 1, ry)));
       drag.moved = true;
     }
   });
@@ -2654,11 +2811,11 @@ function setupPointer() {
     if (d.type === 'grad') {
       const V = viewAffine();
       if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * V[0] < 4) toast('漸層：從起點拖曳到終點', 'info');
-      else applyCoverage(targetNode(), tool.target, covGradient(d.a, d.b, tool.gradOpacity ?? 1), d.erase);
+      else applyCoverage(targetNode(), tool.target, covGradient(restOf(...d.a, targetNode()), restOf(...d.b, targetNode()), tool.gradOpacity ?? 1), d.erase);
     }
     if (d.type === 'shape') {
       const V = viewAffine();
-      if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * V[0] >= 3) applyShape(rectPath(d.a, d.b, tool.shapeKind === 'ellipse', d.sq), d.alt, d.shift);
+      if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * V[0] >= 3) applyShape(lastDraw && lastDraw.posed ? restPath(shapePoints(d.a, d.b, tool.shapeKind === 'ellipse', d.sq), targetNode()) : rectPath(d.a, d.b, tool.shapeKind === 'ellipse', d.sq), d.alt, d.shift);
     }
     if (d.type === 'face') { commit(); renderParams(); }
     if (d.type === 'eyebrush' && eyePick) { eyePick.last = null; eyePickChanged(); }
@@ -3058,7 +3215,10 @@ function openWizard(opt0 = {}) {
 const hasRigging = () => !!D && D.data.nodes.some(n => (isPart(n) && n.type !== 'group') || (n.type === 'image' && n.pins.length));
 function startQuickBuild() {
   if (!D) return;
+  // 重新建模：不管現在是什麼模式都切到簡易模式；按「取消」會整個還原（被刪掉的部位、原本的模式）
+  let restore = null;
   if (hasRigging()) {
+    restore = { idx: D.history.idx, simple: !!D.ui.simple };
     D.data.nodes = D.data.nodes.filter(n => n.type === 'root' || n.type === 'image' || n.type === 'group');
     for (const n of D.data.nodes) {
       if (n.type !== 'image') continue;
@@ -3067,8 +3227,17 @@ function startQuickBuild() {
     }
     for (const n of D.data.nodes) if (n.type === 'group' && !D.data.nodes.some(c => c.parent === n.id)) n.parent = 'root';
     commit(); renderAll();
+    if (!D.ui.simple) setSimple(true);
   }
-  openWizard(D.ui.simple ? { toSimple: true } : {});
+  openWizard(restore || D.ui.simple ? { toSimple: true, restore } : {});
+}
+// 重新建模按了取消：回到刪除部位之前（含原本的模式）
+function undoRebuild(r) {
+  if (!r || !D) return;
+  const H = D.history;
+  if (H.idx > r.idx) { H.idx = r.idx; restore(H.stack[r.idx]); updateUndo(); }
+  if (!!D.ui.simple !== r.simple) setSimple(r.simple);
+  renderAll();
 }
 const wizOptions = opt => [
   'profile' in opt ? field('畫風', seg([['chibi', 'Q 版'], ['normal', '正常比例']], () => opt.profile, v => { opt.profile = v; opt.preset = WIZ_PROFILES[v].preset; const s2 = document.querySelector('#modal select.wpreset'); if (s2) s2.value = opt.preset; }), 'Q 版：頭大、動作彈；正常比例：動作小、比較穩') : null,
@@ -3144,7 +3313,7 @@ function wizardLayered(images, opt0 = {}) {
   }
   const body = el('div', { class: 'dbody keys' },
     el('div', { class: 'khead' }, '每個圖層是什麼？（滑過去會在畫面上標出來）'), list, ...wizOptions(opt));
-  const cancel = el('button', { class: 'btn wcancel', onclick: () => { close(); if (opt.quick && D) { closeTab(D); showHome(); } } }, '取消');
+  const cancel = el('button', { class: 'btn wcancel', onclick: () => { close(); undoRebuild(opt.restore); if (opt.quick && D) { closeTab(D); showHome(); } } }, '取消');
   const build = el('button', { class: 'btn primary', onclick: () => {
     if (![...pick.values()].some(Boolean)) { toast('至少指定一個圖層', 'warn'); return; }
     close(); wizardBuildLayered(pick, opt);
@@ -3463,7 +3632,7 @@ function wizardFinish(opt, made) {
 // 步驟：軀幹、下巴（必要）；頭髮、肚臍、獸耳、尾巴（選配）。頭髮 / 獸耳 / 尾巴：點根部再點末端，或按住從根部拖到末端
 const WIZ_SEGS = { hair: { key: 'hair', label: '頭髮', color: '110,231,183' }, ear: { key: 'ears', label: '獸耳', color: '244,114,182' }, tail: { key: 'tails', label: '尾巴', color: '167,139,250' } };
 function wizardSingle(img, opt0 = {}) {
-  wiz = { img, step: 'torso', torso: null, neck: null, navel: null, hair: [], ears: [], tails: [], props: [], pend: null, hist: [], opt: { hair: true, other: true, preset: 'bounce', profile: 'chibi', ...opt0 } };
+  wiz = { img, step: 'torso', torso: null, neck: null, navel: null, neckAng: 0, navelAng: 0, hair: [], ears: [], tails: [], props: [], pend: null, hist: [], opt: { hair: true, other: true, preset: 'bounce', profile: 'chibi', ...opt0 } };
   wiz.opt.preset = WIZ_PROFILES[wiz.opt.profile].preset;
   setMode('edit'); setTool('select'); D.ui.playing = false;
   wizDim(true);
@@ -3486,15 +3655,26 @@ function wizUndo() {
   if (!h) return;
   if (h === 'prop') wiz.props.pop();
   else if (WIZ_SEGS[h]) wiz[WIZ_SEGS[h].key].pop();
-  else { wiz[h] = null; wiz.step = h; }
+  else { wiz[h] = null; if (h === 'neck' || h === 'navel') wiz[h + 'Ang'] = 0; wiz.step = h; }
   renderWizard();
 }
 function closeWizard() { wiz = null; wizDim(false); renderWizard(); }
+// 頭 / 下半身的分隔線可以旋轉：線通過點 p，角度 wiz[k + 'Ang']（度，往右下為正）；把手在線的右邊
+const wizAngOf = k => (wiz[k + 'Ang'] || 0) * Math.PI / 180;
+const wizLineHandle = k => { const L = D.data.width * 0.16, a = wizAngOf(k); return [wiz[k][0] + L * Math.cos(a), wiz[k][1] + L * Math.sin(a)]; };
+function wizSetAng(k, v) {
+  let d = Math.atan2(v[1] - wiz[k][1], v[0] - wiz[k][0]) * 180 / Math.PI;
+  if (d > 90) d -= 180; else if (d < -90) d += 180;
+  if (Math.abs(d) < 2.5) d = 0;   // 接近水平時吸附
+  wiz[k + 'Ang'] = Math.round(d * 10) / 10;
+}
 // 已經放的點：可以拖曳（螢幕 10px 內）
 function wizHit(mx, my) {
   if (!wiz) return null;
   const V = viewAffine(), near = p => { const q = aApply(V, p[0], p[1]); return Math.hypot(q[0] - mx, q[1] - my) < 10; };
   for (const { key } of Object.values(WIZ_SEGS)) for (const seg of wiz[key]) for (let k = 0; k < 2; k++) if (near(seg[k])) return { set: v => { seg[k] = v; } };
+  // 分隔線的旋轉把手（線的右端）
+  for (const k of ['neck', 'navel']) if (wiz[k] && near(wizLineHandle(k))) return { set: v => { wizSetAng(k, v); }, rot: true };
   for (const k of ['neck', 'navel', 'torso']) if (wiz[k] && near(wiz[k])) return { set: v => { wiz[k] = v; } };
   return null;
 }
@@ -3523,8 +3703,9 @@ function wizNext() {
 }
 // 取消：從「新增 → 快速建立」來的，直接回主頁（不保留這個作品）
 function cancelWizard() {
-  const quick = wiz && wiz.opt.quick;
+  const quick = wiz && wiz.opt.quick, rs = wiz && wiz.opt.restore;
   closeWizard();
+  undoRebuild(rs);
   if (quick && D) { const doc = D; closeTab(doc); showHome(); }
 }
 // 簡易模式：精靈放在右側邊欄（電腦）/ 下方欄位（手機），不擋畫面；完整模式：浮在畫面上、可以拖曳
@@ -3599,13 +3780,16 @@ function drawWizard(g, V) {
   if (!wiz) return;
   const S = (x, y) => aApply(V, x, y), dot = (p, c) => { const q = S(...p); g.beginPath(); g.arc(q[0], q[1], 5, 0, TAU); g.fillStyle = c; g.fill(); g.strokeStyle = '#111'; g.lineWidth = 1; g.stroke(); };
   const label = (p, t) => { const q = S(...p); g.font = '600 11px system-ui'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(t, q[0] + 10, q[1] - 8); g.fillStyle = '#fff'; g.fillText(t, q[0] + 10, q[1] - 8); };
-  const hline = (p, c, t) => {
-    const a = S(0, p[1]), b = S(D.data.width, p[1]);
+  const hline = (k, c, t) => {
+    const p = wiz[k], ang = wizAngOf(k), Wd = D.data.width, ta = Math.tan(ang);
+    const a = S(0, p[1] - ta * p[0]), b = S(Wd, p[1] + ta * (Wd - p[0]));
     g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.setLineDash([6, 4]); g.strokeStyle = c; g.lineWidth = 1.5; g.stroke(); g.setLineDash([]);
-    dot(p, c); label(p, t);
+    dot(p, c); label(p, t + (wiz[k + 'Ang'] ? `（${wiz[k + 'Ang']}°）` : ''));
+    // 旋轉把手：方形
+    const h = S(...wizLineHandle(k)); g.beginPath(); g.rect(h[0] - 5, h[1] - 5, 10, 10); g.fillStyle = '#111'; g.fill(); g.strokeStyle = c; g.lineWidth = 2; g.stroke();
   };
-  if (wiz.neck) hline(wiz.neck, '#facc15', '上 = 頭 · 下 = 身體');
-  if (wiz.navel) hline(wiz.navel, '#fb923c', '下 = 下半身');
+  if (wiz.neck) hline('neck', '#facc15', '上 = 頭 · 下 = 身體');
+  if (wiz.navel) hline('navel', '#fb923c', '下 = 下半身');
   // 頭髮 / 獸耳 / 尾巴：粗的羽化帶 = 會跟著動的範圍
   const HR = wizHairR(), sc = Math.hypot(V[0], V[1]);
   const band = (a, b, col, alpha) => {
@@ -3625,18 +3809,26 @@ function wizardBuildSingle() {
   const { img, neck, navel, opt } = wiz, data = D.data, W = data.width, H = data.height, PF = WIZ_PROFILES[opt.profile];
   const a = D.assets.get(img.image.assetId), T = layerAffine(img.image, a);
   // 範圍 = 圖片本身的 alpha，在下巴線（與肚臍線）上下切開
-  const drawBand = (g, y0, y1) => { g.save(); g.beginPath(); g.rect(0, y0, W, y1 - y0); g.clip(); g.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]); g.drawImage(a.canvas, 0, 0); g.restore(); };
+  // 分隔線可以傾斜：k = 'neck' / 'navel'；null = 沒有（最上 / 最下）
+  const lineY = (k, x) => { const p = wiz[k], ta = Math.tan(wizAngOf(k)); return p[1] + ta * (x - p[0]); };
+  const drawBand = (g, top, bot) => {
+    const BIG = Math.max(W, H) * 2;
+    g.save(); g.beginPath();
+    g.moveTo(0, top ? lineY(top, 0) : -BIG); g.lineTo(W, top ? lineY(top, W) : -BIG);
+    g.lineTo(W, bot ? lineY(bot, W) : H + BIG); g.lineTo(0, bot ? lineY(bot, 0) : H + BIG); g.closePath();
+    g.clip(); g.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]); g.drawImage(a.canvas, 0, 0); g.restore();
+  };
   let made = 0;
   const useNavel = navel && navel[1] > neck[1];
   const torso = addPart(D, 'torso', '上半身', img.id, [wiz.torso], { params: { ...typeDefaults('torso'), ...WIZ_TORSO, curve: { ...WIZ_TORSO.curve } } });
-  paintMask(D, torso, g => drawBand(g, neck[1], useNavel ? navel[1] : H), false, true); made++;
+  paintMask(D, torso, g => drawBand(g, 'neck', useNavel ? 'navel' : null), false, true); made++;
   const head = addPart(D, 'head', '頭', torso.id, [neck], { delay: 4, params: { ...typeDefaults('head'), ...WIZ_PARAMS.head, ...PF.head } });
-  paintMask(D, head, g => drawBand(g, 0, neck[1]), false, true); made++;
+  paintMask(D, head, g => drawBand(g, null, 'neck'), false, true); made++;
   // 下半身：掛在圖層底下（不跟著上半身擺），支點在肚臍，輕微反向擺動
   let hip = null;
   if (useNavel) {
     hip = addPart(D, 'hip', '下半身', img.id, [navel], { params: { ...typeDefaults('hip'), ...(opt.other ? { angle: PF.hipAngle, curve: { shape: 'sine', freq: 1, phase: 0.5 } } : {}) } });
-    paintMask(D, hip, g => drawBand(g, navel[1], H), false, true); made++;
+    paintMask(D, hip, g => drawBand(g, 'navel', null), false, true); made++;
   }
   // 道具：點到的顏色相近區塊（往外 3px）不跟著身體動 → 從頭、上半身、下半身的遮罩扣掉
   if (wiz.props.length) {
@@ -4263,7 +4455,7 @@ function slider(label, get, set, o) {
     const [obj, key] = o.mute, owner = typeof obj[key] === 'number' && D.data.nodes.find(q => q.params === obj);
     if (owner) {
       const tr = 'p.' + key, g0 = get, s0 = set;
-      const live = () => D.ui.mode === 'preview' && !!owner.keys?.[tr]?.length;
+      const live = () => !restPose() && !!owner.keys?.[tr]?.length;
       kInfo = { n: owner, tr, g0 };
       get = () => live() ? g0() + Model.keyVal(D.data, owner, tr, D.ui.frame) : g0();
       set = v => { if (live()) setKey(owner, tr, curU(), v - g0()); else s0(v); };
@@ -4429,12 +4621,22 @@ function freqSlider(label, getSpec, title, tip, onSet) {
 
 function renderRight() { renderToolDetail(); renderInspector(); renderParams(); renderTimeline(); renderProbe(); }
 
+// 筆刷大小預覽：滑過 / 拖曳大小滑桿時，畫面上方顯示實際大小的圈
+let brushPeek = null;
+function peekBrush(row, key) {
+  const on = (ms = 1500) => { const r = row.getBoundingClientRect(); brushPeek = { key, x: r.left + r.width * 0.6, until: performance.now() + ms }; };
+  row.addEventListener('pointerenter', () => on(60000));
+  row.addEventListener('pointerleave', () => { if (brushPeek) brushPeek.until = performance.now() + 600; });
+  row.addEventListener('input', () => on(60000));
+  row.addEventListener('change', () => on(1200));
+  return row;
+}
 // 工具詳細（固定視窗）
 const BRUSH_MAX = 500, SOFT_MAX = 100;
 function brushSliders(sizeKey, softKey, opKey) {
   return [
     ...(opKey ? [slider('不透明度', () => tool[opKey] ?? 1, v => { tool[opKey] = v; }, { min: 0.05, max: 1, step: 0.05, scale: 100, dec: 0, noLive: true, noCommit: true, tip: '%；一筆最多塗到多少（同一筆來回不會疊加）' })] : []),
-    slider('筆刷大小', () => tool[sizeKey], v => { tool[sizeKey] = v; }, { min: 1, max: BRUSH_MAX, step: 1, knee: [0.5, 40], noLive: true, noCommit: true, tip: 'px（最大 500）' }),
+    peekBrush(slider('筆刷大小', () => tool[sizeKey], v => { tool[sizeKey] = v; }, { min: 1, max: BRUSH_MAX, step: 1, knee: [0.5, 40], noLive: true, noCommit: true, tip: 'px（最大 500）' }), sizeKey),
     slider('柔化', () => tool[softKey], v => { tool[softKey] = v; }, { min: 0, max: SOFT_MAX, step: 1, fine: 0.25, knee: [0.5, 10], dec: 2, noLive: true, noCommit: true, tip: '邊緣模糊寬度（px），以筆刷邊緣為中心往內外各半' }),
   ];
 }
@@ -4846,13 +5048,53 @@ function addBlinkAt(n, u) {
   if (!ks.length) delete n.keys.blink;
   commit(); renderTimeline();
 }
+// ---------- 屬性區塊的分頁：屬性 / 範圍 / 圖像 / 深度 ----------
+// 範圍、圖像、深度分頁同時也是編輯工具（筆刷、形狀、漸層、魔術棒）的作用對象
+const ITABS = [['attr', '屬性'], ['range', '範圍'], ['image', '圖像'], ['depth', '深度']];
+const TAB_TGT = { range: 'mask', image: 'image', depth: 'depth' }, TGT_TAB = { mask: 'range', image: 'image', depth: 'depth' };
+function itabOk(k, n) {
+  if (!n || lgById(D.ui.selLg)) return k === 'attr';
+  if (k === 'attr') return true;
+  if (k === 'range') return isPart(n) && n.type !== 'group';
+  if (k === 'image') return n.type === 'image' || (isPart(n) && Model.baseType(n.type) === 'head');
+  if (k === 'depth') return !['root', 'group'].includes(n.type);
+  return false;
+}
+// 目前的分頁（這個選取用不了就暫時顯示「屬性」，換回能用的選取時恢復）
+function curITab() {
+  if (!D) return 'attr';
+  const k = D.ui.itab || 'attr';
+  return itabOk(k, sel()) ? k : 'attr';
+}
+function setITab(k) {
+  if (!D) return;
+  D.ui.itab = k;
+  if (TAB_TGT[k]) tool.target = TAB_TGT[k];
+  renderInspector(); renderTools(); renderToolDetail(); renderStatus();
+}
+function renderITabs() {
+  const bar = $('#inspTabs');
+  if (!bar) return;
+  bar.innerHTML = '';
+  const n = D && sel(), cur = curITab();
+  for (const [k, t] of ITABS) bar.append(el('button', { class: cur === k ? 'on' : '', disabled: D && itabOk(k, n) ? null : 'disabled', onmousedown: e => e.preventDefault(), onclick: () => setITab(k) }, t));
+  // 範圍預覽按鈕：範圍分頁 = 範圍，深度分頁 = 深度圖，其他分頁不能用
+  const tg = $('#tglRegion');
+  if (tg) { tg.disabled = !(cur === 'range' || cur === 'depth'); tg.title = cur === 'depth' ? '顯示深度圖' : cur === 'range' ? '顯示範圍（牽連範圍預覽）' : '範圍 / 深度預覽（在「範圍」或「深度」分頁使用）'; }
+}
 function renderInspector() {
   const box = $('#inspector');
   box.innerHTML = '';
+  renderITabs();
   if (!D) return;
   if (lgById(D.ui.selLg)) { renderLgInspector(box, lgById(D.ui.selLg)); return; }
   const n = sel();
   if (!n) return;
+  const tab = curITab();
+  if (TAB_TGT[tab]) tool.target = TAB_TGT[tab];
+  if (tab === 'range') { renderRangeTab(box, n); return; }
+  if (tab === 'image') { renderImageTab(box, n); return; }
+  if (tab === 'depth') { renderDepthTab(box, n); return; }
   const nameInp = el('input', { type: 'text', value: n.name });
   nameInp.addEventListener('change', () => { if (setNodeName(n, nameInp.value)) { commit(); renderTree(); renderOrder(); } else nameInp.value = n.name; });
   box.append(field('名稱', nameInp));
@@ -4885,8 +5127,19 @@ function renderInspector() {
       field('尺寸', el('span', {}, a ? `${a.w} × ${a.h}` : '—')),
       el('div', { class: 'btnrow' },
         el('button', { class: 'btn', onclick: () => startReplace(n) }, '取代圖片'),
-        el('button', { class: 'btn', onclick: () => exportLayerPNG(n) }, '匯出 PNG')),
-      ...group('差分', '換成另一張圖（例如張嘴、表情）；出現的時間在時間軸上用橫條調整，拖兩端改長度。'));
+        el('button', { class: 'btn', onclick: () => exportLayerPNG(n) }, '匯出 PNG')));
+    return;
+  }
+}
+// 圖像分頁：不透明度、混合模式、剪裁、差分、眨眼（頭部件只有眨眼）
+function renderImageTab(box, n) {
+  if (n.type !== 'image') { renderBlinkUI(box, n); return; }
+  {
+    box.append(slider('不透明度', () => n.opacity ?? 1, v => { n.opacity = v; }, { min: 0, max: 1, step: 0.01, scale: 100, dec: 0, noLive: true, after: renderOrder, tip: '%；這個圖層的不透明度（預覽與輸出都會套用）' }));
+    const bm = n.blend || 'normal';
+    box.append(selectField('混合模式', Object.entries(BLEND_MODES), () => bm, v => { if (v === 'normal') delete n.blend; else n.blend = v; }, () => { renderOrder(); renderDepthBar(); }),
+      el('div', { class: 'frow' }, el('label', {}, ''), checkbox('剪裁遮色片（只顯示在下面那個圖層的範圍內）', () => !!n.clip, v => { if (v) n.clip = true; else delete n.clip; }, () => { renderOrder(); renderDepthBar(); })));
+    box.append(...group('差分', '換成另一張圖（例如張嘴、表情）；出現的時間在時間軸上用橫條調整，拖兩端改長度。'));
     const list = el('div', { class: 'vlist' });
     n.image.variants.forEach((v, i) => {
       const a = D.assets.get(v.assetId), th = el('canvas', { class: 'othumb', width: 34, height: 34 });
@@ -4901,14 +5154,28 @@ function renderInspector() {
     });
     box.append(list, el('div', { class: 'btnrow' }, el('button', { class: 'btn', onclick: () => $('#fileVariant').click() }, '＋ 加入差分')));
     renderBlinkUI(box, n);
-    return;
   }
-
-  if (n.type === 'group') return;
-  if (Model.baseType(n.type) === 'head') renderBlinkUI(box, n);
-
+}
+// 深度分頁：深度的數值與深度圖（用筆刷 / 漸層 / 形狀 / 魔術棒畫）；立體沒啟用時整頁灰掉
+function renderDepthTab(box, n) {
+  const S = P3D.settings(D.data), on = !!S.enabled, P = P3D.nodeOf(n);
+  if (!on) box.append(el('div', { class: 'hint p3don' }, '立體還沒啟用，深度不會有作用。', el('button', { class: 'btn', onclick: () => { S.enabled = true; commit(); renderAll(); renderTools(); } }, '啟用立體')));
+  const body = el('div', { class: on ? '' : 'tabdis' });
+  const hasMap = !!(P.mapId && D.masks.get(P.mapId));
+  body.append(
+    hasMap ? rangeSlider('深度', () => [P.depthFar ?? P.depth ?? 0, P.depth ?? 0], (a, b) => { P.depthFar = a; P.depth = b; }, { min: -1, max: 1, step: 0.05, tip: '左端 = 深度圖沒塗的地方（最深）、右端 = 塗滿的地方（最淺）' })
+      : slider('深度', () => P3D.depthOf(n, D.data), v => { P.depth = v; }, { noLive: true, mute: [P, 'depth'], min: -1, max: 1, step: 0.05, dec: 2, tip: '-1 最後方 … +1 最前方' }),
+    el('div', { class: 'note' }, hasMap ? '有深度圖：用筆刷、漸層、形狀、魔術棒調整（有塗 = 淺 / 靠近）。' : '用筆刷、漸層、形狀、魔術棒畫深度圖：有塗的地方比較淺（靠近），會自動變成深淺兩端可調。'),
+    el('div', { class: 'btnrow' },
+      el('button', { class: 'btn', onclick: () => { showRegion = !showRegion; $('#tglRegion').classList.toggle('on', showRegion); renderInspector(); } }, showRegion ? '隱藏深度圖預覽' : '顯示深度圖預覽'),
+      el('button', { class: 'btn', disabled: hasMap ? null : 'disabled', onclick: () => { P.mapId = null; P.depth = P3D.depthOf(n, D.data); commit(); renderAll(); } }, '清除深度圖')));
+  box.append(body);
+  if (!on) body.querySelectorAll('input, select, button').forEach(e => { e.disabled = true; });
+}
+// 範圍分頁：錨點周圍 / 遮罩，牽連範圍、獨立圖層
+function renderRangeTab(box, n) {
   const R = n.region;
-  box.append(...group('範圍', '核心 = 完全跟著動的區域；牽連範圍 = 核心外越遠越小的影響。'));
+  box.append(el('div', { class: 'note' }, '核心 = 完全跟著動的區域；牽連範圍 = 核心外越遠越小的影響。遮罩可以用筆刷、形狀、漸層、魔術棒編輯。'));
   box.append(selectField('方式', [['auto', '錨點周圍（自動）'], ['mask', '遮罩（可編輯）'], ['none', '無']], () => R.mode, v => {
     if (v === 'mask' && R.mode === 'auto') { R.mode = 'auto'; editableMask(D, n); }
     else R.mode = v;
@@ -4920,7 +5187,7 @@ function renderInspector() {
     slider('牽連範圍', () => R.feather, v => { R.feather = v; }, { min: 0, max: Math.round(M * 0.5), step: 1, noLive: true, tip: '核心外還會被帶動的距離（px），越遠影響越小' }),
     slider('支點柔化', () => R.hinge ?? 0, v => { R.hinge = v; }, { min: 0, max: Math.round(M * 0.4), step: 1, tip: '旋轉 / 縮放從支點往外多遠才完全作用（px），消除支點周圍的分界' }),
     el('div', { class: 'btnrow' },
-      R.mode === 'auto' ? el('button', { class: 'btn', onclick: () => { editableMask(D, n); commit(); renderAll(); tool.target = 'mask'; setTool('brush'); } }, '轉成遮罩並編輯') :
+      R.mode === 'auto' ? el('button', { class: 'btn', onclick: () => { editableMask(D, n); commit(); renderAll(); setITab('range'); setTool('brush'); } }, '轉成遮罩並編輯') :
         R.mode === 'mask' ? el('button', { class: 'btn', onclick: () => { R.mode = 'auto'; commit(); renderAll(); } }, '依錨點重建') : null,
       el('button', { class: 'btn', onclick: () => { showRegion = !showRegion; $('#tglRegion').classList.toggle('on', showRegion); } }, showRegion ? '隱藏範圍預覽' : '顯示範圍預覽')),
   );
@@ -5368,11 +5635,11 @@ function setupSplitters() {
       const v = sp.dataset.var, dir = +sp.dataset.dir, vert = sp.classList.contains('vsplit');
       const start = vert ? e.clientX : e.clientY;
       // 左右面板從實際寬度起算（視窗窄時寬度會被自動縮小）
-      const pn = v === '--lw' ? $('.panel.left') : v === '--rw' ? (document.body.classList.contains('simplemode') ? $('#simpleR') : $('.panel.right')) : null;
-      const cur = pn ? pn.getBoundingClientRect().width : parseFloat(getComputedStyle(layout).getPropertyValue(v)) || 200;
+      const pn = v === '--lw' ? $('.panel.left') : v === '--rw' ? (document.body.classList.contains('simplemode') ? $('#simpleR') : $('.panel.right')) : v === '--orderH' ? $('#sec2') : v === '--paramH' ? $('#sec4') : null;
+      const cur = pn ? pn.getBoundingClientRect()[vert ? 'width' : 'height'] : parseFloat(getComputedStyle(layout).getPropertyValue(v)) || 200;
       const move = ev => {
         const d = ((vert ? ev.clientX : ev.clientY) - start) * dir;
-        const val = Math.max(vert ? 180 : 60, Math.min(vert ? 600 : 600, cur + d));
+        const val = Math.max(vert ? 180 : 60, Math.min(vert ? 600 : Math.max(200, innerHeight - 220), cur + d));
         layout.style.setProperty(v, val + 'px');
       };
       const up = () => {
@@ -5658,7 +5925,7 @@ function drawRigGuide(g, V, evals) {
 // 拖曳：畫面上的位移直接加到靜止位置（試轉中也能正確調整）
 function rigPointerDown(mx, my, x, y) {
   const host = rigEditHost();
-  if (!host || D.ui.mode !== 'edit' || !rigShow) return null;
+  if (!host || !rigShow) return null;
   const S = rigDisplay(host, lastDraw && lastDraw.evals), hs = rigHandles(host);
   // 後畫的在上面：範圍把手 > 五官 > 頭 / 臉
   const h = hs.slice().reverse().find(h => { const q = S(...h.p, h.m); return Math.hypot(q[0] - mx, q[1] - my) < 9; });
@@ -6378,15 +6645,31 @@ function showNotices() {
   m.onclick = e => { if (e.target === m) close(); };
 }
 function hideHome() { const h = $('#home'); if (h) h.classList.add('hidden'); document.body.classList.remove('onhome'); navTrap(); }
+// 新增檔案：選好流程再開檔案選擇（完整模式 / 快速建立）
+function pickNewFile(kind, accept) {
+  newFlow = kind;
+  const inp = $('#fileOpen');
+  inp.accept = accept;
+  inp.click();
+  setTimeout(() => { inp.accept = OPEN_ACCEPT; }, 0);
+}
+// 工具列 / 分頁列的「新增檔案」按鈕：跳出下拉選單
+function newFileMenu(anchor) {
+  const r = anchor.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, [
+    { label: '完整模式' },
+    { label: '開啟檔案…', icon: 'open', run: () => pickNewFile('full', OPEN_ACCEPT) },
+    '-',
+    { label: '快速建立' },
+    { label: '單圖層', icon: 'image', run: () => pickNewFile('single', '.png,.jpg,.jpeg,.webp,.gif') },
+    { label: '多圖層（PSD）', icon: 'layers', run: () => pickNewFile('layered', '.psd') },
+  ]);
+}
 // 新增：完整模式（A）或快速建立（B 單張 / C 分層）
 function openNewDialog() {
   const pick = (kind, accept) => () => {
     close();
-    newFlow = kind;
-    const inp = $('#fileOpen');
-    inp.accept = accept;
-    inp.click();
-    setTimeout(() => { inp.accept = OPEN_ACCEPT; }, 0);
+    pickNewFile(kind, accept);
   };
   // 方形大圖示的區塊；點對話框外面就關掉
   const tile = (icon, title, run, cls = '') => el('button', { class: 'ntile ' + cls, onclick: run }, ico(icon), el('b', {}, title));
@@ -6579,7 +6862,7 @@ function layerBoxGrip() {
 }
 function placeLayerPanel() {
   layerBoxGrip();
-  const on = !!(D && D.ui.simple), home = $('.panel.left'), box = $('#simpleLayers');
+  const on = !!(D && D.ui.simple), home = $('#sec2'), box = $('#simpleLayers');
   const parts = [$('#orderHead'), $('#depthBar'), $('#orderList')];
   if (!home || !box || parts.some(p => !p)) return;
   if (on && parts[0].parentElement !== box) box.insertBefore(parts[0], box.querySelector('.sgrip')), box.insertBefore(parts[1], box.querySelector('.sgrip')), box.insertBefore(parts[2], box.querySelector('.sgrip'));
@@ -6720,6 +7003,18 @@ function init() {
     resize();
   };
   const flip = k => { try { localStorage.setItem(k, localStorage.getItem(k) === '1' ? '0' : '1'); } catch (_) { /* ignore */ } setPanels(); };
+  // 四個區塊：1、3 往上收，2、4 往下收（收起後留一排放按鈕，按鈕位置不動）
+  const setFolds = () => {
+    for (const k of [1, 2, 3, 4]) {
+      const on = localStorage.getItem('tan.fold' + k) === '1', pnl = $(k <= 2 ? '.panel.left' : '.panel.right'), up = k % 2 === 1;
+      pnl.classList.toggle('f' + k, on);
+      const name = { 1: '部位', 2: '圖層', 3: '屬性', 4: '參數' }[k];
+      Object.assign($('#btnFold' + k), { textContent: (up !== on) ? '︿' : '﹀', title: (on ? '展開' : '收起') + `「${name}」` });
+    }
+    resize();
+  };
+  for (const k of [1, 2, 3, 4]) $('#btnFold' + k).onclick = () => { try { localStorage.setItem('tan.fold' + k, localStorage.getItem('tan.fold' + k) === '1' ? '0' : '1'); } catch (_) { /* ignore */ } setFolds(); };
+  try { setFolds(); } catch (_) { /* ignore */ }
   $('#btnHideLeft').onclick = () => flip('puppet.noleft');
   $('#btnHideRight').onclick = () => flip('puppet.noright');
   try { setPanels(); } catch (_) { /* ignore */ }
@@ -6752,7 +7047,7 @@ function init() {
   { let light = false; try { light = localStorage.getItem('tan.bgLight') === '1'; } catch (_) { /* ignore */ }
     const setBg = v => { light = v; $('#stage').classList.toggle('light', v); $('#tglBg').classList.toggle('on', v); try { localStorage.setItem('tan.bgLight', v ? '1' : '0'); } catch (_) { /* ignore */ } };
     setBg(light); $('#tglBg').onclick = () => setBg(!light); }
-  $('#tglRegion').onclick = e => { showRegion = !showRegion; e.currentTarget.classList.toggle('on', showRegion); renderInspector(); };
+  $('#tglRegion').onclick = e => { if (e.currentTarget.disabled) return; showRegion = !showRegion; e.currentTarget.classList.toggle('on', showRegion); renderInspector(); };
   $('#scrub').addEventListener('input', e => {
     if (!D) return;
     if (D.ui.mode !== 'preview') setMode('preview');
@@ -6784,10 +7079,10 @@ function init() {
         brushDown: () => { const k = { image: 'paintSize', depth: 'depthSize' }[tool.target] || 'brush'; tool[k] = Math.max(1, Math.round(tool[k] / 1.2)); renderToolDetail(); },
         brushUp: () => { const k = { image: 'paintSize', depth: 'depthSize' }[tool.target] || 'brush'; tool[k] = Math.min(BRUSH_MAX, Math.round(tool[k] * 1.2 + 1)); renderToolDetail(); },
         maskMode: () => { if (!EDIT_TOOLS.has(tool.name)) return; if (tool.name === 'shape') tool.shapeMode = tool.shapeMode === 'add' ? 'erase' : 'add'; else tool.mode = tool.mode === 'add' ? 'erase' : 'add'; renderToolDetail(); },
-        editTarget: () => { if (!D) return; if (!EDIT_TOOLS.has(tool.name)) setTool('brush'); const list = TARGETS.map(([t]) => t).filter(targetUsable); if (list.length) setTarget(list[(list.indexOf(tool.target) + 1) % list.length]); },
+        editTarget: () => { if (!D) return; const list = ['range', 'image', 'depth'].filter(k => itabOk(k, sel())); if (list.length) setITab(list[(list.indexOf(curITab()) + 1) % list.length]); },
         play: () => {
           if (!D || e.repeat) return;
-          if (c === 'Space' && D.ui.mode === 'edit' && tool.name !== 'select') { spaceDown = true; return; }
+          if (c === 'Space' && tool.name !== 'select') { spaceDown = true; return; }
           togglePlay();
         },
       }[act] || (act.startsWith('tool.') && D ? () => setTool(act.slice(5)) : null);
@@ -6795,7 +7090,7 @@ function init() {
     }
     if (ctrl && e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); redo(); return; }
     if (typing || !D) return;
-    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && D.ui.mode === 'edit' && tool.name !== 'select') spaceDown = true; return; }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && tool.name !== 'select') spaceDown = true; return; }
     if (e.key === 'Enter' && lasso) finishLasso();
     else if (e.key === 'Enter' && D.ui.crop) { endCrop(true); setTool('select'); }
     else if (e.key === 'Escape') {
@@ -6829,5 +7124,5 @@ function init() {
 
 init();
 // 除錯用
-window.__puppet = { setLayerRole, addPinAt, startEyePick, finishEyePick, blinkLevels, eyeParts, rigDisplay: h => rigDisplay(h, lastDraw && lastDraw.evals), get doc() { return D; }, get renderer() { return renderer; }, ensureDerived, tabs, tool, draw, switchTab, viewAffine, drawScene, get lasso() { return lasso; }, setMode, selectNode, runExport, openFiles, enableBlink, commit, renderAll, saveProject, projName, toggleTimeline, eyePickTest: (hostId, polys) => { eyePick = { hostId, polys }; finishEyePick(); }, openSample, assetFromCanvas, renderTools, branchChains, layerSampler, wizardBuildLayered, openWizard, get wiz() { return wiz; }, showHome, setSimple, openNewDialog, newWith: (kind, files) => { newFlow = kind; return openFiles(files).then(afterOpen); } };
+window.__puppet = { get lastDraw() { return lastDraw; }, restOf, pinScreen, setITab, curITab, setTool, get stroke() { return stroke; }, setLayerRole, addPinAt, startEyePick, finishEyePick, blinkLevels, eyeParts, rigDisplay: h => rigDisplay(h, lastDraw && lastDraw.evals), get doc() { return D; }, get renderer() { return renderer; }, ensureDerived, tabs, tool, draw, switchTab, viewAffine, drawScene, get lasso() { return lasso; }, setMode, selectNode, runExport, openFiles, enableBlink, commit, renderAll, saveProject, projName, toggleTimeline, eyePickTest: (hostId, polys) => { eyePick = { hostId, polys }; finishEyePick(); }, openSample, assetFromCanvas, renderTools, branchChains, layerSampler, wizardBuildLayered, openWizard, get wiz() { return wiz; }, showHome, setSimple, openNewDialog, newWith: (kind, files) => { newFlow = kind; return openFiles(files).then(afterOpen); } };
 })();

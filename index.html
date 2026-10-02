@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>彈design</title>
-<link rel="stylesheet" href="css/style.css?v=123">
+<link rel="stylesheet" href="css/style.css?v=128">
 </head>
 <body class="onhome">
 <div id="home" class="home"></div>
@@ -31,6 +31,8 @@
   <div class="pstrip left"><button class="pcol" id="btnHideLeft" title="收起左側">«</button></div>
   <div class="pstrip right"><button class="pcol" id="btnHideRight" title="收起右側">»</button></div>
   <aside class="panel left">
+    <div class="cstrip top"><button class="ccol" id="btnFold1" title="收起「部位」（往上）"></button></div>
+    <div class="psec sec1" id="sec1">
     <div class="phead">
       <span class="ptitle">部位</span>
       <div class="pact">
@@ -40,21 +42,20 @@
       </div>
     </div>
     <div class="tree" id="tree"></div>
-    <div class="hsplit" data-var="--orderH" data-dir="-1"></div>
+    </div>
+    <div class="hsplit hs12" data-var="--orderH" data-dir="-1"></div>
+    <div class="psec sec2" id="sec2">
     <div class="phead" id="orderHead"><span class="ptitle" title="上面的圖層在前方">圖層</span><div class="pact"><button class="tb icon" id="btnGroup" title="群組：Ctrl / Shift 點選多個圖層後按，組起來可以一起移動（變形工具）"><span data-ico="folder"></span></button></div></div>
     <div class="depthbar" id="depthBar"></div>
     <div class="orderlist" id="orderList"></div>
+    </div>
+    <div class="cstrip bot"><button class="ccol" id="btnFold2" title="收起「圖層」（往下）"></button></div>
   </aside>
   <div class="vsplit" data-var="--lw" data-dir="1"></div>
 
   <section class="stage-wrap">
     <div class="toolbar">
       <div class="tools" id="tools"></div>
-      <span class="sep"></span>
-      <div class="seg" id="modeSeg">
-        <button data-mode="edit" class="on">編輯</button>
-        <button data-mode="preview">預覽</button>
-      </div>
       <span class="grow"></span>
       <button class="tb icon toggle on" id="tglRegion" title="顯示範圍（牽連範圍預覽）"><span data-ico="region"></span></button>
       <button class="tb icon toggle on" id="tglPins" title="顯示錨點"><span data-ico="pin"></span></button>
@@ -95,12 +96,17 @@
 
   <aside class="spanel right" id="simpleR"><div class="wizdock" id="wizDock"></div><div class="slayerbox" id="simpleLayers"></div><div class="sbody" id="simpleBody"></div></aside>
   <aside class="panel right">
-    <div class="rscroll">
-      <div class="phead"><span class="ptitle">屬性</span></div>
-      <div class="pbody" id="inspector"></div>
-      <div class="phead"><span class="ptitle">參數</span></div>
-      <div class="pbody" id="params"></div>
+    <div class="cstrip top"><button class="ccol" id="btnFold3" title="收起「屬性」（往上）"></button></div>
+    <div class="psec sec3" id="sec3">
+      <div class="phead itabs" id="inspTabs"></div>
+      <div class="rscroll"><div class="pbody" id="inspector"></div></div>
     </div>
+    <div class="hsplit hs34" data-var="--paramH" data-dir="-1"></div>
+    <div class="psec sec4" id="sec4">
+      <div class="phead"><span class="ptitle">參數</span></div>
+      <div class="rscroll"><div class="pbody" id="params"></div></div>
+    </div>
+    <div class="cstrip bot"><button class="ccol" id="btnFold4" title="收起「參數」（往下）"></button></div>
   </aside>
   <div class="hsplit tlsplit" data-var="--tlH" data-dir="-1"></div>
   <div class="timeline hidden" id="timeline"></div>
@@ -114,25 +120,25 @@
 <div id="toasts"></div>
 <div id="rotateHint" class="rotatehint"><div><b>請把手機轉成橫向</b><span>完整模式需要橫向的畫面；或切回簡易模式</span><button class="btn" id="btnBackSimple">回到簡易模式</button></div></div>
 
-<script src="js/icons.js?v=123"></script>
-<script src="js/anim.js?v=123"></script>
-<script src="js/mesh.js?v=123"></script>
-<script src="js/imgproc.js?v=123"></script>
-<script src="js/p3d.js?v=123"></script>
-<script src="js/headrig.js?v=123"></script>
-<script src="js/model.js?v=123"></script>
-<script src="js/blink.js?v=123"></script>
-<script src="js/blink_tpl.js?v=123"></script>
-<script src="js/notices.js?v=123"></script>
-<script src="js/renderer.js?v=123"></script>
-<script src="js/psd.js?v=123"></script>
-<script src="js/exporter.js?v=123"></script>
-<script src="js/project.js?v=123"></script>
-<script src="js/templates.js?v=123"></script>
-<script src="js/sample-girl.js?v=123"></script>
-<script src="js/sample-white-psd.js?v=123"></script>
-<script src="js/sample-blink.js?v=123"></script>
-<script src="js/demo.js?v=123"></script>
-<script src="js/app.js?v=123"></script>
+<script src="js/icons.js?v=128"></script>
+<script src="js/anim.js?v=128"></script>
+<script src="js/mesh.js?v=128"></script>
+<script src="js/imgproc.js?v=128"></script>
+<script src="js/p3d.js?v=128"></script>
+<script src="js/headrig.js?v=128"></script>
+<script src="js/model.js?v=128"></script>
+<script src="js/blink.js?v=128"></script>
+<script src="js/blink_tpl.js?v=128"></script>
+<script src="js/notices.js?v=128"></script>
+<script src="js/renderer.js?v=128"></script>
+<script src="js/psd.js?v=128"></script>
+<script src="js/exporter.js?v=128"></script>
+<script src="js/project.js?v=128"></script>
+<script src="js/templates.js?v=128"></script>
+<script src="js/sample-girl.js?v=128"></script>
+<script src="js/sample-white-psd.js?v=128"></script>
+<script src="js/sample-blink.js?v=128"></script>
+<script src="js/demo.js?v=128"></script>
+<script src="js/app.js?v=128"></script>
 </body>
 </html>

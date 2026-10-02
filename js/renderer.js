@@ -265,11 +265,21 @@ const Renderer = (() => {
         gl.drawElements(gl.TRIANGLES, d.count, gl.UNSIGNED_SHORT, 0);
         setBlend('normal');
       },
-      drawWeights(d, positions, weights, m, cw, ch, color, alpha = 0.55) {
+      // 暫用的貼圖（例如深度圖換算到圖層座標）：old 有就覆寫
+      texture(source, old) {
+        if (!old) return makeTex(source);
+        gl.bindTexture(gl.TEXTURE_2D, old);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        return old;
+      },
+      freeTexture(t) { if (t) gl.deleteTexture(t); },
+      // tex：用別的貼圖的 alpha（預設 = 圖層本身）
+      drawWeights(d, positions, weights, m, cw, ch, color, alpha = 0.55, tex = null) {
         if (!d.count) return;
         bind(P_W, d, positions, m, cw, ch, alpha, weights);
         gl.uniform3fv(P_W.uColor, color);
-        gl.bindTexture(gl.TEXTURE_2D, d.tex[0]);
+        gl.bindTexture(gl.TEXTURE_2D, tex || d.tex[0]);
         gl.drawElements(gl.TRIANGLES, d.count, gl.UNSIGNED_SHORT, 0);
       },
     };

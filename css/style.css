@@ -51,13 +51,13 @@ button, select, input { font: inherit; color: inherit; }
 .tab input { width: 120px; background: var(--field); border: 1px solid var(--blue); padding: 1px 4px; }
 
 /* ---------- layout ---------- */
-.layout { --lw: 260px; --rw: 310px; --orderH: 240px; --toolH: 150px; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--lw) 4px 1fr 4px var(--rw); }
+.layout { --lw: 260px; --rw: 310px; --orderH: 240px; --paramH: 340px; --toolH: 150px; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--lw) 4px 1fr 4px var(--rw); }
 .vsplit { cursor: col-resize; background: var(--line-dark); }
 .vsplit:hover, .hsplit:hover, .vsplit.drag, .hsplit.drag { background: var(--blue); }
 .hsplit { height: 4px; cursor: row-resize; background: var(--line-dark); flex: none; }
 .hsplit, .vsplit { position: relative; }
 .phint { color: var(--muted); font-size: 11px; }
-.orderlist { height: var(--orderH); overflow-y: auto; padding: 2px 0; flex: none; }
+.orderlist { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0; }
 .orow { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 6px; cursor: grab; border-bottom: 1px solid var(--line-dark); }
 .orow:hover { background: var(--hover); }
 .orow.sel { background: var(--sel); }
@@ -689,3 +689,29 @@ body { -webkit-touch-callout: none; }
 .noticed .nbody { margin: 0; padding-left: 20px; }
 .noticed .nbody li { margin: 4px 0; line-height: 1.55; color: var(--text); }
 .noticed .ndot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #ff3b57; vertical-align: 1px; }
+
+/* ---------- 四個區塊：1 部位 / 2 圖層（左）、3 屬性 / 4 參數（右）；1、3 往上收、2、4 往下收，收起後留一排放按鈕 ---------- */
+.psec { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.psec.sec1, .psec.sec3 { flex: 1; }
+.psec.sec2 { height: var(--orderH); flex: none; }
+.psec.sec4 { height: var(--paramH); flex: none; }
+.cstrip { flex: none; height: 14px; display: flex; background: var(--panel); }
+.cstrip.top { border-bottom: 1px solid var(--line-dark); }
+.cstrip.bot { border-top: 1px solid var(--line-dark); }
+.panel.left .cstrip { justify-content: flex-end; }
+.panel.right .cstrip { justify-content: flex-start; }
+.cstrip .ccol { width: 30px; height: 14px; padding: 0; background: none; border: 0; color: var(--muted); font-size: 10px; line-height: 14px; cursor: pointer; }
+.cstrip .ccol:hover { color: var(--fg, #fff); background: var(--hover); }
+.panel.f1 .sec1, .panel.f2 .sec2, .panel.f3 .sec3, .panel.f4 .sec4 { display: none; }
+.panel.f1 .hs12, .panel.f2 .hs12, .panel.f3 .hs34, .panel.f4 .hs34 { display: none; }
+.panel.f1 .sec2, .panel.f3 .sec4 { flex: 1; height: auto; }
+.panel.f1.f2 .cstrip.bot, .panel.f3.f4 .cstrip.bot { margin-top: auto; }
+/* 屬性區塊的分頁 */
+.phead.itabs { justify-content: flex-start; gap: 2px; padding-left: 6px; }
+.itabs button { background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px; padding: 6px 7px 5px; border-bottom: 2px solid transparent; cursor: pointer; }
+.itabs button:hover { color: var(--text); }
+.itabs button.on { color: var(--text); border-bottom-color: #e9557c; }
+.itabs button:disabled { opacity: .35; cursor: default; }
+
+.tabdis { opacity: .4; pointer-events: none; }
+.toolbar .tb.toggle:disabled { opacity: .3; cursor: default; }
